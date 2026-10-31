@@ -60,6 +60,12 @@ key.properties
 
 **/key.properties
 matriculas_pdf/
+scripts/
 *.apk
 *.aab
 .env
+
+# Configuraciones de Firebase con API Keys
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+lib/firebase_options.dart

@@ -17,6 +17,14 @@ class SupabaseConfig {
     'ADMIN_SERVICE_PASS',
     defaultValue: '',
   );
+  static const String fcmPrivateKeyId = String.fromEnvironment(
+    'FCM_PRIVATE_KEY_ID',
+    defaultValue: '',
+  );
+  static const String fcmPrivateKey = String.fromEnvironment(
+    'FCM_PRIVATE_KEY',
+    defaultValue: '',
+  );
 
   // Versión actual de la aplicación para control de versiones
   static const String appVersion = '1.2.0';

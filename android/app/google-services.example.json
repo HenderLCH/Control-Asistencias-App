@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "557479471446",
+    "project_number": "YOUR_PROJECT_NUMBER",
     "project_id": "control-asitencias-nazareth",
     "storage_bucket": "control-asitencias-nazareth.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:557479471446:android:2f22b057829a8181e34ef7",
+        "mobilesdk_app_id": "1:YOUR_PROJECT_NUMBER:android:YOUR_APP_ID",
         "android_client_info": {
           "package_name": "com.consolacion.contro_asistencias"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCnl3V8x3zSBT-B-65hllYy9isxnSy-j1Q"
+          "current_key": "YOUR_FIREBASE_ANDROID_API_KEY"
         }
       ],
       "services": {
