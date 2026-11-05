@@ -8,16 +8,30 @@ class FcmSenderService {
   factory FcmSenderService() => _instance;
   FcmSenderService._internal();
 
-  static Map<String, dynamic> get _serviceAccount => {
-    "type": "service_account",
-    "project_id": "control-asitencias-nazareth",
-    "private_key_id": SupabaseConfig.fcmPrivateKeyId,
-    "private_key": SupabaseConfig.fcmPrivateKey.replaceAll(r'\n', '\n'),
-    "client_email": "firebase-adminsdk-fbsvc@control-asitencias-nazareth.iam.gserviceaccount.com",
-    "client_id": "110296567271265451976",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-  };
+  static Map<String, dynamic> get _serviceAccount {
+    String privateKey = SupabaseConfig.fcmPrivateKey;
+    // Si la clave viene codificada en base64 (para evitar problemas de saltos de línea con dart-define)
+    if (privateKey.startsWith('LS0t')) {
+      try {
+        privateKey = utf8.decode(base64.decode(privateKey.replaceAll('\n', '').replaceAll('\r', '').trim()));
+      } catch (e) {
+        debugPrint('Error decoding base64 FCM private key: $e');
+      }
+    } else {
+      privateKey = privateKey.replaceAll(r'\n', '\n');
+    }
+
+    return {
+      "type": "service_account",
+      "project_id": "control-asitencias-nazareth",
+      "private_key_id": SupabaseConfig.fcmPrivateKeyId,
+      "private_key": privateKey,
+      "client_email": "firebase-adminsdk-fbsvc@control-asitencias-nazareth.iam.gserviceaccount.com",
+      "client_id": "110296567271265451976",
+      "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+      "token_uri": "https://oauth2.googleapis.com/token",
+    };
+  }
 
   AutoRefreshingAuthClient? _cachedClient;
 
