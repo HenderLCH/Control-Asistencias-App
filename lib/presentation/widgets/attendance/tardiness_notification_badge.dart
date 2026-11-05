@@ -23,15 +23,27 @@ class TardinessNotificationBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    // Only Admin and Coordinator receive these notifications
-    if (!auth.isAdmin && !auth.isCoordinator) {
-      return const SizedBox.shrink();
-    }
-
     final attendance = context.watch<AttendanceProvider>();
     final userProvider = context.watch<UserProvider>();
-    final totalAlerts = attendance.totalAlertsCount;
-    final citationsCount = attendance.citationsCount;
+    final studentProv = context.watch<StudentProvider>();
+
+    // Si es profesor, solo ve las alertas de sus salones asignados
+    final isTeacher = auth.isTeacher;
+    final teacherClassroomIds = isTeacher
+        ? studentProv.classrooms
+            .where((c) => c.teacherId == auth.currentUser?.id)
+            .map((c) => c.id)
+            .toSet()
+        : <String>{};
+
+    final alertsList = isTeacher
+        ? attendance.tardinessAlerts
+            .where((a) => teacherClassroomIds.contains(a.classroomId))
+            .toList()
+        : attendance.tardinessAlerts;
+
+    final totalAlerts = alertsList.length;
+    final citationsCount = alertsList.where((a) => a.isCitation).length;
 
     final pendingPasswordUsers = auth.isAdmin
         ? userProvider.users.where((u) =>
@@ -42,6 +54,11 @@ class TardinessNotificationBadge extends StatelessWidget {
 
     final passwordCount = pendingPasswordUsers.length;
     final totalCount = totalAlerts + passwordCount;
+
+    // Si no hay alertas y es profesor, o si el usuario no tiene rol permitido
+    if (isTeacher && totalCount == 0) {
+      return const SizedBox.shrink();
+    }
 
     final badgeColor = citationsCount > 0
         ? const Color(0xFFEF4444) // Rojo alerta urgente

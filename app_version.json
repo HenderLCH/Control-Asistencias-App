@@ -1,0 +1,8 @@
+{
+  "latest_version": "1.2.0",
+  "min_required_version": "1.2.0",
+  "update_url": "https://play.google.com/store/apps/details?id=com.consolacion.contro_asistencias",
+  "title": "¡Nueva versión disponible!",
+  "message": "Hay una versión más reciente de la aplicación disponible en Google Play Store con mejoras y correcciones importantes. Por favor, actualiza para continuar.",
+  "force_update": false
+}

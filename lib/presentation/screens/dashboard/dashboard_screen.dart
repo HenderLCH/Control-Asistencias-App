@@ -13,6 +13,7 @@ import 'package:contro_asistencias/data/models/classroom.dart';
 import 'package:contro_asistencias/data/models/user_profile.dart';
 import 'package:contro_asistencias/presentation/widgets/common/logo_loading_indicator.dart';
 import 'package:contro_asistencias/core/services/notification_service.dart';
+import 'package:contro_asistencias/core/services/version_check_service.dart';
 import 'package:contro_asistencias/presentation/widgets/auth/change_password_dialog.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -47,6 +48,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       } else if (authProv.shouldShowWelcome && mounted) {
         authProv.markWelcomeShown();
         _showWelcomeModal(context, authProv.currentUser);
+      }
+
+      // Verificar si la versión de la app está obsoleta en la tienda
+      if (mounted) {
+        VersionCheckService().checkForUpdates(context);
       }
 
       // Cargar salones según el rol:
@@ -704,6 +710,10 @@ class _ClassroomCard extends StatelessWidget {
     final attendanceProvider = context.watch<AttendanceProvider>();
     final isCompletedToday = attendanceProvider.completedClassroomNamesToday.contains(classroom.displayName);
 
+    // Alertas de tardanzas/citaciones para este salón
+    final citationAlerts = attendanceProvider.getCitationsCountForClassroom(classroom.id);
+    final warningAlerts = attendanceProvider.getWarningsCountForClassroom(classroom.id);
+
     return GestureDetector(
       onTap: () {
         context.go('/classrooms/${classroom.id}/attendance');
@@ -791,6 +801,55 @@ class _ClassroomCard extends StatelessWidget {
                                   fontSize: 10,
                                   fontWeight: FontWeight.w700,
                                   color: Color(0xFF10B981),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (citationAlerts > 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, size: 11, color: Color(0xFFEF4444)),
+                              const SizedBox(width: 3),
+                              Text(
+                                '$citationAlerts citación${citationAlerts > 1 ? 'es' : ''}',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFFEF4444),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else if (warningAlerts > 0) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF59E0B).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.info_outline_rounded, size: 11, color: Color(0xFFF59E0B)),
+                              const SizedBox(width: 3),
+                              Text(
+                                '$warningAlerts preventiva${warningAlerts > 1 ? 's' : ''}',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFFF59E0B),
                                 ),
                               ),
                             ],
