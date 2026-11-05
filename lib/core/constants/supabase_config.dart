@@ -27,7 +27,7 @@ class SupabaseConfig {
   );
 
   // Versión actual de la aplicación para control de versiones
-  static const String appVersion = '1.2.0';
+  static const String appVersion = '1.2.1';
 
   // Table names
   static const String tableProfiles = 'profiles';
