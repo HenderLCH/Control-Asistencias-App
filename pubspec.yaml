@@ -2,7 +2,7 @@ name: contro_asistencias
 description: "Control de Asistencias - Colegio Nuestra Señora de la Consolación de Táriba"
 publish_to: 'none'
 
-version: 1.2.1+5
+version: 1.2.2+6
 
 environment:
   sdk: ^3.11.0

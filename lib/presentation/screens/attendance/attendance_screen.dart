@@ -254,6 +254,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       final auth = context.read<AuthProvider>();
       final teacherName = auth.currentUser?.fullName ?? 'Profesor';
       final isToday = DateUtils.isSameDay(_selectedDate, DateTime.now());
+      final notificationClassroomName = isToday
+          ? name
+          : '$name (${DateFormat('dd/MM/yyyy').format(_selectedDate)})';
 
       if (isToday) {
         attendanceProvider.markClassroomCompleted(name);
@@ -265,7 +268,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
         // Disparar la notificación INMEDIATAMENTE al terminar de pasar la lista
         await attendanceProvider.notifyAttendanceAction(
-          classroomName: name,
+          classroomName: notificationClassroomName,
           teacherName: teacherName,
           isModification: isMod,
         );
@@ -275,12 +278,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         if (auth.isAdmin || auth.isCoordinator) {
           if (isMod) {
             NotificationService().showAttendanceModifiedNotification(
-              classroomName: name,
+              classroomName: notificationClassroomName,
               teacherName: teacherName,
             );
           } else {
             NotificationService().showAttendanceCompletedNotification(
-              classroomName: name,
+              classroomName: notificationClassroomName,
               teacherName: teacherName,
             );
           }
@@ -292,14 +295,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       } else if (_wasAlreadyCompleteOnEntry && _hasMadeChangesInSession) {
         // En caso de sufrir modificaciones después, notificar de inmediato
         await attendanceProvider.notifyAttendanceAction(
-          classroomName: name,
+          classroomName: notificationClassroomName,
           teacherName: teacherName,
           isModification: true,
         );
 
         if (auth.isAdmin || auth.isCoordinator) {
           NotificationService().showAttendanceModifiedNotification(
-            classroomName: name,
+            classroomName: notificationClassroomName,
             teacherName: teacherName,
           );
         }
@@ -485,8 +488,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final students = studentProvider.students;
 
     final isToday = DateUtils.isSameDay(_selectedDate, DateTime.now());
-    // Los días anteriores SOLO los pueden editar coordinadores y administrador
-    final canMark = isToday || auth.isAdmin || auth.isCoordinator;
+    // Profesores, coordinadores y administrador pueden registrar y editar días anteriores
+    final canMark = isToday || auth.isTeacher || auth.isAdmin || auth.isCoordinator;
     final totalStudents = students.length;
     final markedStudents = attendanceProvider.todayAttendance.keys.length;
     final isComplete = totalStudents > 0 && markedStudents >= totalStudents;
@@ -738,7 +741,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 ),
               ),
 
-            // Banner explicativo si está en modo edición (lista completa o día anterior para Coord/Admin)
+            // Banner explicativo si está en modo edición (lista completa o día anterior)
             if (canMark && !showSequentialRollCall && (isComplete || !isToday))
               Container(
                 margin: const EdgeInsets.fromLTRB(16, 2, 16, 6),
@@ -755,7 +758,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     Expanded(
                       child: Text(
                         !isToday
-                            ? 'Modo edición de fecha anterior (Coord./Admin): Puedes registrar o corregir la asistencia de cualquier estudiante.'
+                            ? 'Modo edición de fecha anterior: Puedes registrar o corregir la asistencia de cualquier estudiante.'
                             : 'Modo edición: Puedes modificar cualquier alumno de la lista (si llegó tarde o justificó).',
                         style: const TextStyle(
                           fontSize: 11.5,
