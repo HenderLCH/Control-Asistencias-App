@@ -50,6 +50,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         classroomId: widget.classroomId,
         date: _selectedDate,
       );
+      attendanceProvider.loadTardinessAlerts();
 
       final students = studentProvider.students;
       final totalStudents = students.length;
@@ -225,14 +226,30 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           markedById: auth.currentUser?.id,
         );
         if (mounted) {
-          if (advanceOnMark) {
-            _advanceToNextStudent(students, attendanceProvider);
+          setState(() => _savingStudentId = null);
+
+          // Si se acaba de marcar una tardanza y el estudiante llega a 2 (preventiva) o >= 3 (citación),
+          // mostrar alerta emergente inmediata con botón OK antes de continuar con la asistencia.
+          if (newStatus == 'tardanza' && currentStatus != 'tardanza') {
+            final updatedLateCount = attendanceProvider.getLateCountForStudent(student.id);
+            if (updatedLateCount >= 2 && mounted) {
+              await _showTardinessCitationAlertDialog(
+                student: student,
+                lateCount: updatedLateCount,
+              );
+            }
           }
-          await _checkCompletionAndNotify(
-            attendanceProvider: attendanceProvider,
-            totalStudents: students.length,
-            classroomName: classroomName,
-          );
+
+          if (mounted) {
+            if (advanceOnMark) {
+              _advanceToNextStudent(students, attendanceProvider);
+            }
+            await _checkCompletionAndNotify(
+              attendanceProvider: attendanceProvider,
+              totalStudents: students.length,
+              classroomName: classroomName,
+            );
+          }
         }
       }
     } finally {
@@ -259,7 +276,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           : '$name (${DateFormat('dd/MM/yyyy').format(_selectedDate)})';
 
       if (isToday) {
-        attendanceProvider.markClassroomCompleted(name);
+        attendanceProvider.markClassroomCompleted(
+          name,
+          classroomId: widget.classroomId,
+        );
       }
 
       if (!_hasTriggeredCompletion) {
@@ -308,6 +328,112 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         }
       }
     }
+  }
+
+  Future<void> _showTardinessCitationAlertDialog({
+    required Student student,
+    required int lateCount,
+  }) async {
+    final isCitation = lateCount >= 3;
+    final alertColor = isCitation ? const Color(0xFFEF4444) : const Color(0xFFF59E0B);
+    final title = isCitation
+        ? '¡Alerta de Citación!'
+        : 'Alerta Preventiva';
+    final message = isCitation
+        ? 'Este estudiante (${student.fullName}) ha llegado a la ${lateCount == 3 ? '3era' : '${lateCount}ta'} tardanza y requiere citación de representante.'
+        : 'Este estudiante (${student.fullName}) está a una tardanza de citación de representante.';
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        final isDark = Theme.of(dialogCtx).brightness == Brightness.dark;
+        return Dialog(
+          backgroundColor: isDark ? const Color(0xFF162032) : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 380),
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    color: alertColor.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isCitation
+                        ? Icons.notification_important_rounded
+                        : Icons.warning_amber_rounded,
+                    color: alertColor,
+                    size: 34,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: alertColor,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: alertColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    isCitation
+                        ? '🚨 $lateCount tardanzas acumuladas'
+                        : '⚠️ 2 tardanzas acumuladas',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: alertColor,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white : AppTheme.onBackground,
+                    height: 1.38,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: alertColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () => Navigator.of(dialogCtx).pop(),
+                    child: const Text(
+                      'OK, continuar con la asistencia',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _showCompletionDialog(int totalStudents, String name, AuthProvider auth) async {
@@ -1162,6 +1288,48 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         ),
                       ),
 
+                      if (attendanceProvider.getLateCountForStudent(student.id) >= 2) ...[
+                        const SizedBox(height: 12),
+                        Builder(
+                          builder: (context) {
+                            final sLateCount = attendanceProvider.getLateCountForStudent(student.id);
+                            final isCit = sLateCount >= 3;
+                            final bColor = isCit ? const Color(0xFFEF4444) : const Color(0xFFF59E0B);
+                            return Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: bColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: bColor.withOpacity(0.4)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isCit ? Icons.notification_important_rounded : Icons.warning_amber_rounded,
+                                    size: 18,
+                                    color: bColor,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      isCit
+                                          ? 'Este estudiante (${student.fullName}) acumula $sLateCount tardanzas: Citación de representante.'
+                                          : 'Este estudiante (${student.fullName}) está a una tardanza de citación de representante (lleva 2).',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: bColor,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+
                       const SizedBox(height: 22),
 
                       const Text(
@@ -1852,6 +2020,50 @@ class _AttendanceTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                   ),
+            Builder(
+              builder: (context) {
+                final lateCount = context.watch<AttendanceProvider>().getLateCountForStudent(student.id);
+                if (lateCount < 2) return const SizedBox.shrink();
+                final isCit = lateCount >= 3;
+                final bColor = isCit ? const Color(0xFFEF4444) : const Color(0xFFF59E0B);
+                return Padding(
+                  padding: const EdgeInsets.only(top: 3),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: bColor.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: bColor.withOpacity(0.35)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isCit ? Icons.notification_important_rounded : Icons.warning_amber_rounded,
+                          size: 11,
+                          color: bColor,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            isCit
+                                ? 'Citación de representante ($lateCount tardanzas)'
+                                : 'A 1 tardanza de citación (lleva 2)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: bColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
             if (hasCleanNotes)
               Padding(
                 padding: const EdgeInsets.only(top: 2),

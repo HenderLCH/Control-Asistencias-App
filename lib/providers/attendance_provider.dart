@@ -61,8 +61,28 @@ class AttendanceProvider extends ChangeNotifier {
 
   // Completed classrooms tracking for today
   List<String> _completedClassroomNamesToday = [];
+  Set<String> _completedClassroomIdsToday = {};
+  Map<String, int> _todayMarkedCountByClassroom = {};
+  Map<String, int> _totalStudentsByClassroom = {};
+
   List<String> get completedClassroomNamesToday => _completedClassroomNamesToday;
   int get completedClassroomsCount => _completedClassroomNamesToday.length;
+
+  bool isClassroomCompletedToday(Classroom c) {
+    if (_completedClassroomIdsToday.contains(c.id) ||
+        _completedClassroomNamesToday.contains(c.displayName)) {
+      return true;
+    }
+    final total = _totalStudentsByClassroom[c.id] ?? c.studentCount ?? 0;
+    final marked = _todayMarkedCountByClassroom[c.id] ?? 0;
+    return total > 0 && marked >= total;
+  }
+
+  int getTodayMarkedCountForClassroom(String classroomId) =>
+      _todayMarkedCountByClassroom[classroomId] ?? 0;
+
+  int getTotalStudentsForClassroom(String classroomId, {int? fallback}) =>
+      _totalStudentsByClassroom[classroomId] ?? fallback ?? 0;
 
   final String _clientInstanceId = DateTime.now().microsecondsSinceEpoch.toString();
   RealtimeChannel? _realtimeChannel;
@@ -178,9 +198,16 @@ class AttendanceProvider extends ChangeNotifier {
     }
   }
 
-  void markClassroomCompleted(String classroomName) {
+  void markClassroomCompleted(String classroomName, {String? classroomId}) {
+    bool changed = false;
     if (!_completedClassroomNamesToday.contains(classroomName)) {
       _completedClassroomNamesToday.add(classroomName);
+      changed = true;
+    }
+    if (classroomId != null && _completedClassroomIdsToday.add(classroomId)) {
+      changed = true;
+    }
+    if (changed) {
       notifyListeners();
     }
   }
@@ -188,29 +215,98 @@ class AttendanceProvider extends ChangeNotifier {
   Future<void> checkCompletedClassroomsForToday(List<Classroom> classrooms) async {
     try {
       final dateStr = _dateToString(DateTime.now());
-      final attendanceData = await _supabase
-          .from('attendance')
-          .select('classroom_id, student_id, status, notes')
-          .eq('date', dateStr);
+
+      // 1. Obtener conteo real de estudiantes activos por salón
+      dynamic studentsData;
+      try {
+        studentsData = await _supabase
+            .from('students')
+            .select('id, classroom_id')
+            .eq('is_active', true);
+      } catch (_) {}
+
+      if (studentsData == null || (studentsData is List && studentsData.isEmpty)) {
+        final jwt = await PasswordManagementService.getAdminJwt();
+        if (jwt != null) {
+          final resp = await http.get(
+            Uri.parse('${SupabaseConfig.supabaseUrl}/rest/v1/students?is_active=eq.true&select=id,classroom_id'),
+            headers: {
+              'apikey': SupabaseConfig.supabaseAnonKey,
+              'Authorization': 'Bearer $jwt',
+            },
+          );
+          if (resp.statusCode == 200) {
+            studentsData = jsonDecode(resp.body);
+          }
+        }
+      }
+
+      final Map<String, int> studentCounts = {};
+      if (studentsData != null && studentsData is List) {
+        for (final s in studentsData) {
+          final cId = s['classroom_id'] as String?;
+          if (cId != null) {
+            studentCounts[cId] = (studentCounts[cId] ?? 0) + 1;
+          }
+        }
+      }
+
+      // 2. Obtener registros de asistencia de hoy
+      dynamic attendanceData;
+      try {
+        attendanceData = await _supabase
+            .from('attendance')
+            .select('classroom_id, student_id, status, notes')
+            .eq('date', dateStr);
+      } catch (_) {}
+
+      if (attendanceData == null || (attendanceData is List && attendanceData.isEmpty)) {
+        final jwt = await PasswordManagementService.getAdminJwt();
+        if (jwt != null) {
+          final resp = await http.get(
+            Uri.parse('${SupabaseConfig.supabaseUrl}/rest/v1/attendance?date=eq.$dateStr&select=classroom_id,student_id,status,notes'),
+            headers: {
+              'apikey': SupabaseConfig.supabaseAnonKey,
+              'Authorization': 'Bearer $jwt',
+            },
+          );
+          if (resp.statusCode == 200) {
+            attendanceData = jsonDecode(resp.body);
+          }
+        }
+      }
 
       final Map<String, Set<String>> markedByClassroom = {};
-      for (final r in (attendanceData as List)) {
-        if (r['status'] != 'removido' && r['notes'] != '[DESMARCADO]') {
-          final cId = r['classroom_id'] as String;
-          final sId = r['student_id'] as String;
-          markedByClassroom.putIfAbsent(cId, () => {}).add(sId);
+      if (attendanceData != null && attendanceData is List) {
+        for (final r in attendanceData) {
+          if (r['status'] != 'removido' && r['notes'] != '[DESMARCADO]') {
+            final cId = r['classroom_id'] as String;
+            final sId = r['student_id'] as String;
+            markedByClassroom.putIfAbsent(cId, () => {}).add(sId);
+          }
         }
       }
 
-      final List<String> completed = [];
+      final List<String> completedNames = [];
+      final Set<String> completedIds = {};
+      final Map<String, int> markedCounts = {};
+      final Map<String, int> totalCounts = {...studentCounts};
+
       for (final c in classrooms) {
-        final count = c.studentCount ?? 0;
+        final count = studentCounts[c.id] ?? c.studentCount ?? 0;
+        totalCounts[c.id] = count;
         final marked = markedByClassroom[c.id]?.length ?? 0;
+        markedCounts[c.id] = marked;
         if (count > 0 && marked >= count) {
-          completed.add(c.displayName);
+          completedNames.add(c.displayName);
+          completedIds.add(c.id);
         }
       }
-      _completedClassroomNamesToday = completed;
+
+      _totalStudentsByClassroom = totalCounts;
+      _todayMarkedCountByClassroom = markedCounts;
+      _completedClassroomNamesToday = completedNames;
+      _completedClassroomIdsToday = completedIds;
       notifyListeners();
     } catch (e) {
       debugPrint('Error checking completed classrooms: $e');
@@ -336,9 +432,23 @@ class AttendanceProvider extends ChangeNotifier {
       }
 
       if (response != null) {
+        final previousStatus = _todayAttendance[studentId]?.status;
         final updatedRecord = AttendanceRecord.fromMap(response as Map<String, dynamic>);
         if (dateStr == _dateToString(_selectedDate)) {
           _todayAttendance[studentId] = updatedRecord;
+        }
+        if (dateStr == _dateToString(DateTime.now())) {
+          _todayMarkedCountByClassroom[classroomId] = _todayAttendance.length;
+        }
+
+        // Actualizar el conteo de tardanzas inmediatamente en memoria para disparo instantáneo de alertas
+        if (status == 'tardanza' && previousStatus != 'tardanza') {
+          _studentLateCounts[studentId] = (_studentLateCounts[studentId] ?? 0) + 1;
+        } else if (previousStatus == 'tardanza' && status != 'tardanza') {
+          final currentCount = _studentLateCounts[studentId] ?? 0;
+          if (currentCount > 0) {
+            _studentLateCounts[studentId] = currentCount - 1;
+          }
         }
 
         // Actualizar también el historial individual si contiene registros de este alumno
@@ -510,8 +620,19 @@ class AttendanceProvider extends ChangeNotifier {
         }
 
         _todayAttendance.remove(studentId);
+        if (_dateToString(_selectedDate) == _dateToString(DateTime.now())) {
+          _todayMarkedCountByClassroom[existingRecord.classroomId] = _todayAttendance.length;
+          final total = _totalStudentsByClassroom[existingRecord.classroomId] ?? 0;
+          if (total > 0 && _todayAttendance.length < total) {
+            _completedClassroomIdsToday.remove(existingRecord.classroomId);
+          }
+        }
 
         if (existingRecord.status == 'tardanza') {
+          final currentCount = _studentLateCounts[studentId] ?? 0;
+          if (currentCount > 0) {
+            _studentLateCounts[studentId] = currentCount - 1;
+          }
           loadTardinessAlerts();
         }
       }
@@ -645,6 +766,10 @@ class AttendanceProvider extends ChangeNotifier {
             _todayAttendance[student.id] = AttendanceRecord.fromMap(response as Map<String, dynamic>);
           }
         }
+      }
+      if (dateStr == _dateToString(DateTime.now())) {
+        _todayMarkedCountByClassroom[classroomId] = _todayAttendance.length;
+        _completedClassroomIdsToday.add(classroomId);
       }
     } catch (e) {
       _error = e.toString();

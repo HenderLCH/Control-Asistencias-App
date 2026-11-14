@@ -359,11 +359,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
 
                 // Today's date / Classrooms Section
-                _SectionTitle(
-                  title: auth.isTeacher ? 'Mi Salón Asignado' : 'Salones',
-                  subtitle: auth.isTeacher
-                      ? 'Pasa asistencia diaria de tus alumnos'
-                      : 'Selecciona para pasar asistencia',
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: _SectionTitle(
+                        title: auth.isTeacher ? 'Mi Salón Asignado' : 'Salones',
+                        subtitle: auth.isTeacher
+                            ? 'Pasa asistencia diaria de tus alumnos'
+                            : 'Selecciona para pasar asistencia',
+                      ),
+                    ),
+                    if ((auth.isAdmin || auth.isCoordinator) && students.classrooms.isNotEmpty)
+                      Consumer<AttendanceProvider>(
+                        builder: (context, attProv, _) {
+                          final completedCount = students.classrooms
+                              .where((c) => attProv.isClassroomCompletedToday(c))
+                              .length;
+                          final totalClassrooms = students.classrooms.length;
+                          final allDone = completedCount >= totalClassrooms && totalClassrooms > 0;
+                          final badgeColor = allDone
+                              ? const Color(0xFF10B981)
+                              : (completedCount > 0 ? const Color(0xFF0284C7) : AppTheme.textSecondary);
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: badgeColor.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: badgeColor.withOpacity(0.35)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  allDone ? Icons.verified_rounded : Icons.fact_check_outlined,
+                                  size: 14,
+                                  color: badgeColor,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  '$completedCount/$totalClassrooms completados',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: badgeColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 12),
 
@@ -708,7 +755,13 @@ class _ClassroomCard extends StatelessWidget {
     final color = gradeColors[gradeIndex >= 0 ? gradeIndex % gradeColors.length : 0];
 
     final attendanceProvider = context.watch<AttendanceProvider>();
-    final isCompletedToday = attendanceProvider.completedClassroomNamesToday.contains(classroom.displayName);
+    final isCompletedToday = attendanceProvider.isClassroomCompletedToday(classroom);
+    final markedToday = attendanceProvider.getTodayMarkedCountForClassroom(classroom.id);
+    final totalStudents = attendanceProvider.getTotalStudentsForClassroom(
+      classroom.id,
+      fallback: classroom.studentCount,
+    );
+    final isInProgressToday = !isCompletedToday && markedToday > 0;
 
     // Alertas de tardanzas/citaciones para este salón
     final citationAlerts = attendanceProvider.getCitationsCountForClassroom(classroom.id);
@@ -724,8 +777,9 @@ class _ClassroomCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isCompletedToday
-                ? const Color(0xFF10B981).withOpacity(0.35)
+                ? const Color(0xFF10B981).withOpacity(0.45)
                 : Theme.of(context).dividerColor,
+            width: isCompletedToday ? 1.4 : 1.0,
           ),
           boxShadow: [
             BoxShadow(
@@ -737,6 +791,7 @@ class _ClassroomCard extends StatelessWidget {
         ),
         padding: const EdgeInsets.all(16),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
               width: 52,
@@ -773,93 +828,15 @@ class _ClassroomCard extends StatelessWidget {
                       color: Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
-                  Row(
-                    children: [
-                      Text(
-                        'Sección ${classroom.section}',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppTheme.textSecondary,
-                        ),
-                      ),
-                      if (isCompletedToday) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF10B981).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.check_circle_rounded, size: 11, color: Color(0xFF10B981)),
-                              SizedBox(width: 3),
-                              Text(
-                                'Tomada',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF10B981),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      if (citationAlerts > 0) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEF4444).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.warning_amber_rounded, size: 11, color: Color(0xFFEF4444)),
-                              const SizedBox(width: 3),
-                              Text(
-                                '$citationAlerts citación${citationAlerts > 1 ? 'es' : ''}',
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFFEF4444),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else if (warningAlerts > 0) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF59E0B).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.info_outline_rounded, size: 11, color: Color(0xFFF59E0B)),
-                              const SizedBox(width: 3),
-                              Text(
-                                '$warningAlerts preventiva${warningAlerts > 1 ? 's' : ''}',
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFFF59E0B),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
+                  Text(
+                    'Sección ${classroom.section}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppTheme.textSecondary,
+                    ),
                   ),
                   if (classroom.teacherName != null) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 3),
                     Row(
                       children: [
                         const Icon(
@@ -882,6 +859,137 @@ class _ClassroomCard extends StatelessWidget {
                       ],
                     ),
                   ],
+                  const SizedBox(height: 7),
+                  // Estado de asistencia diaria y alertas debajo de la sección/profesor
+                  // usando Wrap para que el contenedor crezca verticalmente sin montarse sobre los botones
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 5,
+                    children: [
+                      if (isCompletedToday)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.35)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.check_circle_rounded, size: 11, color: Color(0xFF10B981)),
+                              SizedBox(width: 4),
+                              Text(
+                                'Asistencia completada',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF10B981),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (isInProgressToday)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0284C7).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.35)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.timelapse_rounded, size: 11, color: Color(0xFF0284C7)),
+                              const SizedBox(width: 4),
+                              Text(
+                                totalStudents > 0
+                                    ? 'En progreso ($markedToday/$totalStudents)'
+                                    : 'En progreso ($markedToday)',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF0284C7),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppTheme.textSecondary.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: AppTheme.textSecondary.withOpacity(0.25)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.schedule_rounded, size: 11, color: AppTheme.textSecondary),
+                              SizedBox(width: 4),
+                              Text(
+                                'Pendiente hoy',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppTheme.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (citationAlerts > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.35)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, size: 11, color: Color(0xFFEF4444)),
+                              const SizedBox(width: 3),
+                              Text(
+                                '$citationAlerts citación${citationAlerts > 1 ? 'es' : ''}',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFFEF4444),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (warningAlerts > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF59E0B).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.35)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.info_outline_rounded, size: 11, color: Color(0xFFF59E0B)),
+                              const SizedBox(width: 3),
+                              Text(
+                                '$warningAlerts preventiva${warningAlerts > 1 ? 's' : ''}',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFFF59E0B),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),

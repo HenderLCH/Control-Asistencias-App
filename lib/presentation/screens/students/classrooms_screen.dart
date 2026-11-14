@@ -61,13 +61,18 @@ class _ClassroomsScreenState extends State<ClassroomsScreen> {
             tooltip: 'Actualizar',
             onPressed: () async {
               final authP = context.read<AuthProvider>();
+              final sProv = context.read<StudentProvider>();
+              final aProv = context.read<AttendanceProvider>();
               if (authP.isTeacher && authP.currentUser != null) {
-                await context.read<StudentProvider>().loadClassroomsForTeacher(authP.currentUser!.id);
+                await sProv.loadClassroomsForTeacher(authP.currentUser!.id);
               } else {
-                context.read<StudentProvider>().loadClassrooms();
+                await sProv.loadClassrooms();
               }
               context.read<UserProvider>().loadUsers();
-              context.read<AttendanceProvider>().loadTardinessAlerts();
+              await aProv.loadTardinessAlerts();
+              if (mounted) {
+                await aProv.checkCompletedClassroomsForToday(sProv.classrooms);
+              }
             },
           ),
           // Solo el Admin puede crear nuevos salones
@@ -395,6 +400,13 @@ class _ClassroomTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasTeacher = classroom.teacherName != null && classroom.teacherName!.isNotEmpty;
     final attendance = context.watch<AttendanceProvider>();
+    final isCompletedToday = attendance.isClassroomCompletedToday(classroom);
+    final markedToday = attendance.getTodayMarkedCountForClassroom(classroom.id);
+    final totalStudents = attendance.getTotalStudentsForClassroom(
+      classroom.id,
+      fallback: classroom.studentCount,
+    );
+    final isInProgressToday = !isCompletedToday && markedToday > 0;
     final citationsCount = attendance.getCitationsCountForClassroom(classroom.id);
     final warningsCount = attendance.getWarningsCountForClassroom(classroom.id);
 
@@ -405,10 +417,12 @@ class _ClassroomTile extends StatelessWidget {
         border: Border.all(
           color: citationsCount > 0
               ? const Color(0xFFEF4444).withOpacity(0.5)
-              : hasTeacher
-                  ? Theme.of(context).dividerColor
-                  : AppTheme.warning.withOpacity(0.35),
-          width: citationsCount > 0 ? 1.5 : 1,
+              : isCompletedToday
+                  ? const Color(0xFF10B981).withOpacity(0.45)
+                  : hasTeacher
+                      ? Theme.of(context).dividerColor
+                      : AppTheme.warning.withOpacity(0.35),
+          width: (citationsCount > 0 || isCompletedToday) ? 1.5 : 1,
         ),
         boxShadow: [
           BoxShadow(
@@ -515,8 +529,12 @@ class _ClassroomTile extends StatelessWidget {
                       onPressed: onAssignTeacher,
                     ),
                   IconButton(
-                    icon: const Icon(Icons.how_to_reg_rounded, color: AppTheme.accent, size: 21),
-                    tooltip: 'Asistencia',
+                    icon: Icon(
+                      isCompletedToday ? Icons.edit_note_rounded : Icons.how_to_reg_rounded,
+                      color: isCompletedToday ? const Color(0xFF10B981) : AppTheme.accent,
+                      size: 21,
+                    ),
+                    tooltip: isCompletedToday ? 'Editar asistencia de hoy' : 'Pasar asistencia',
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.all(6),
                     constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
@@ -536,64 +554,137 @@ class _ClassroomTile extends StatelessWidget {
               ),
             ],
           ),
-          if (citationsCount > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 8, left: 58),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEE2E2),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFF87171)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFB91C1C)),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        '$citationsCount estudiante(s) con 3 tardanzas (Citar Rep.)',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFB91C1C),
-                        ),
-                      ),
+          Padding(
+            padding: const EdgeInsets.only(top: 8, left: 58),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                if (isCompletedToday)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF10B981).withOpacity(0.35)),
                     ),
-                  ],
-                ),
-              ),
-            )
-          else if (warningsCount > 0)
-            Padding(
-              padding: const EdgeInsets.only(top: 8, left: 58),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFF59E0B)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFB45309)),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        '$warningsCount en alerta (2 tardanzas)',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF92400E),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.check_circle_rounded, size: 13, color: Color(0xFF10B981)),
+                        SizedBox(width: 4),
+                        Text(
+                          'Asistencia completada hoy',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF10B981),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
+                  )
+                else if (isInProgressToday)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0284C7).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.35)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.timelapse_rounded, size: 13, color: Color(0xFF0284C7)),
+                        const SizedBox(width: 4),
+                        Text(
+                          totalStudents > 0
+                              ? 'En progreso hoy ($markedToday/$totalStudents)'
+                              : 'En progreso hoy ($markedToday)',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF0284C7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                    decoration: BoxDecoration(
+                      color: AppTheme.textSecondary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.textSecondary.withOpacity(0.25)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.schedule_rounded, size: 13, color: AppTheme.textSecondary),
+                        SizedBox(width: 4),
+                        Text(
+                          'Asistencia pendiente hoy',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (citationsCount > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFF87171)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, size: 13, color: Color(0xFFB91C1C)),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$citationsCount con 3+ tardanzas (Citar Rep.)',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFB91C1C),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (warningsCount > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFF59E0B)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.info_outline_rounded, size: 13, color: Color(0xFFB45309)),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$warningsCount preventiva${warningsCount > 1 ? 's' : ''} (2 tardanzas)',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF92400E),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     ).animate().fadeIn().slideX(begin: 0.05);
