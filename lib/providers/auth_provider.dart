@@ -24,12 +24,15 @@ class AuthProvider extends ChangeNotifier {
   }
 
   bool get isAdmin => _currentUser?.isAdmin ?? false;
+  bool get isDirector => _currentUser?.isDirector ?? false;
   bool get isCoordinator => _currentUser?.isCoordinator ?? false;
   bool get isTeacher => _currentUser?.isTeacher ?? false;
   bool get canManageData => isAdmin;
   bool get canAssignTeachers => isAdmin || isCoordinator;
 
   bool _isTempLogin = false;
+  static const String _explicitLoginEmailKey = 'cnsc_explicit_login_email';
+  static const String _explicitLoginUidKey = 'cnsc_explicit_login_uid';
 
   final SupabaseClient _supabase = Supabase.instance.client;
 
@@ -59,6 +62,23 @@ class AuthProvider extends ChangeNotifier {
   Future<void> _loadUserProfile(User? user) async {
     if (user == null) return;
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final explicitEmail = prefs.getString(_explicitLoginEmailKey)?.toLowerCase();
+      final sessionEmail = (user.email ?? '').trim().toLowerCase();
+      final adminEmail = SupabaseConfig.adminServiceEmail.trim().toLowerCase();
+
+      // Protección crítica: Si un teléfono de profesor quedó con la sesión de servicio admin
+      // guardada por versiones previas (cuando usaron clave temporal), cerrar esa sesión de inmediato.
+      if (adminEmail.isNotEmpty &&
+          sessionEmail == adminEmail &&
+          explicitEmail != adminEmail) {
+        debugPrint('Detected leaked admin service session on non-admin device. Signing out...');
+        await _supabase.auth.signOut();
+        _currentUser = null;
+        notifyListeners();
+        return;
+      }
+
       final data = await _supabase
           .from('profiles')
           .select()
@@ -68,6 +88,29 @@ class AuthProvider extends ChangeNotifier {
       if (data != null) {
         _currentUser = UserProfile.fromMap({...data, 'email': user.email ?? ''});
       } else {
+        // Fallback consultando con JWT administrativo por si RLS bloqueó la lectura
+        final jwt = await PasswordManagementService.getAdminJwt();
+        if (jwt != null) {
+          final resp = await http.get(
+            Uri.parse('${SupabaseConfig.supabaseUrl}/rest/v1/profiles?id=eq.${user.id}&select=*'),
+            headers: {
+              'apikey': SupabaseConfig.supabaseAnonKey,
+              'Authorization': 'Bearer $jwt',
+            },
+          );
+          if (resp.statusCode == 200) {
+            final list = jsonDecode(resp.body) as List;
+            if (list.isNotEmpty) {
+              _currentUser = UserProfile.fromMap({
+                ...(list.first as Map<String, dynamic>),
+                'email': user.email ?? '',
+              });
+              notifyListeners();
+              return;
+            }
+          }
+        }
+
         // Create profile if missing
         final role = (user.email == 'henderljunior@gmail.com')
             ? 'administrador'
@@ -101,7 +144,7 @@ class AuthProvider extends ChangeNotifier {
         fullName: user.userMetadata?['full_name'] ??
             (user.email == 'henderljunior@gmail.com'
                 ? 'Administrador CNSC'
-                : 'Ludy Tibisay'),
+                : (user.email ?? 'Usuario')),
         role: role,
       );
       notifyListeners();
@@ -113,14 +156,20 @@ class AuthProvider extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
 
+    final cleanEmail = email.trim().toLowerCase();
+
     try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_explicitLoginEmailKey, cleanEmail);
+
       final response = await _supabase.auth.signInWithPassword(
-        email: email,
+        email: cleanEmail,
         password: password,
       );
 
       if (response.user != null) {
         _isTempLogin = false;
+        await prefs.setString(_explicitLoginUidKey, response.user!.id);
         await _loadUserProfile(response.user);
         _isLoading = false;
         _shouldShowWelcome = true;
@@ -134,26 +183,15 @@ class AuthProvider extends ChangeNotifier {
     } on AuthException catch (e) {
       // Intentar validar si tiene una contraseña temporal generada por el administrador
       final tempUser = await PasswordManagementService.verifyTemporaryPassword(
-        email,
+        cleanEmail,
         password,
       );
       if (tempUser != null) {
-        _isTempLogin = true;
-        if (SupabaseConfig.adminServiceEmail.isNotEmpty &&
-            SupabaseConfig.adminServicePass.isNotEmpty) {
-          try {
-            await _supabase.auth.signInWithPassword(
-              email: SupabaseConfig.adminServiceEmail,
-              password: SupabaseConfig.adminServicePass,
-            );
-          } catch (_) {}
-        }
-        _currentUser = tempUser;
-        _isLoading = false;
-        _errorMessage = null;
-        _shouldShowWelcome = true;
-        notifyListeners();
-        return true;
+        return await _completeTempUserLogin(
+          tempUser: tempUser,
+          email: cleanEmail,
+          password: password,
+        );
       }
 
       _isLoading = false;
@@ -163,26 +201,15 @@ class AuthProvider extends ChangeNotifier {
     } catch (e) {
       // Intentar validar si tiene una contraseña temporal generada por el administrador
       final tempUser = await PasswordManagementService.verifyTemporaryPassword(
-        email,
+        cleanEmail,
         password,
       );
       if (tempUser != null) {
-        _isTempLogin = true;
-        if (SupabaseConfig.adminServiceEmail.isNotEmpty &&
-            SupabaseConfig.adminServicePass.isNotEmpty) {
-          try {
-            await _supabase.auth.signInWithPassword(
-              email: SupabaseConfig.adminServiceEmail,
-              password: SupabaseConfig.adminServicePass,
-            );
-          } catch (_) {}
-        }
-        _currentUser = tempUser;
-        _isLoading = false;
-        _errorMessage = null;
-        _shouldShowWelcome = true;
-        notifyListeners();
-        return true;
+        return await _completeTempUserLogin(
+          tempUser: tempUser,
+          email: cleanEmail,
+          password: password,
+        );
       }
 
       _isLoading = false;
@@ -192,8 +219,67 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Sincroniza la clave temporal con la propia cuenta del usuario en Supabase Auth
+  /// NUNCA inicia sesión con la cuenta del administrador en el dispositivo del profesor.
+  Future<bool> _completeTempUserLogin({
+    required UserProfile tempUser,
+    required String email,
+    required String password,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_explicitLoginEmailKey, email);
+    await prefs.setString(_explicitLoginUidKey, tempUser.id);
+
+    // Sincronizar la contraseña en Supabase Auth para este usuario específico y autenticar su propia sesión
+    try {
+      final jwt = await PasswordManagementService.getAdminJwt();
+      if (jwt != null && !tempUser.id.startsWith('temp_')) {
+        await http.put(
+          Uri.parse('${SupabaseConfig.supabaseUrl}/auth/v1/admin/users/${tempUser.id}'),
+          headers: {
+            'apikey': SupabaseConfig.supabaseAnonKey,
+            'Authorization': 'Bearer $jwt',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'password': password.trim(),
+            'email_confirm': true,
+          }),
+        );
+        final res = await _supabase.auth.signInWithPassword(
+          email: email,
+          password: password.trim(),
+        );
+        if (res.user != null) {
+          _isTempLogin = false;
+          _currentUser = tempUser;
+          _isLoading = false;
+          _errorMessage = null;
+          _shouldShowWelcome = true;
+          notifyListeners();
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error syncing temp user auth session: $e');
+    }
+
+    _isTempLogin = true;
+    _currentUser = tempUser;
+    _isLoading = false;
+    _errorMessage = null;
+    _shouldShowWelcome = true;
+    notifyListeners();
+    return true;
+  }
+
   Future<void> signOut() async {
     _isTempLogin = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_explicitLoginEmailKey);
+      await prefs.remove(_explicitLoginUidKey);
+    } catch (_) {}
     await _supabase.auth.signOut();
     _currentUser = null;
     notifyListeners();
@@ -237,16 +323,18 @@ class AuthProvider extends ChangeNotifier {
     try {
       final jwt = await PasswordManagementService.getAdminJwt();
 
-      // 1. Intentar actualizar contraseña a través de la sesión de Supabase Auth
+      // 1. Intentar actualizar contraseña a través de la sesión propia de Supabase Auth
       bool authUpdated = false;
-      try {
-        await _supabase.auth.updateUser(UserAttributes(password: newPassword));
-        authUpdated = true;
-      } catch (authErr) {
-        debugPrint('Direct updateUser failed: $authErr. Trying admin REST API...');
+      if (!_isTempLogin && _supabase.auth.currentUser?.id == _currentUser!.id) {
+        try {
+          await _supabase.auth.updateUser(UserAttributes(password: newPassword));
+          authUpdated = true;
+        } catch (authErr) {
+          debugPrint('Direct updateUser failed: $authErr. Trying admin REST API...');
+        }
       }
 
-      // Si falló (ej. por ser sesión temporal admin-fallback), actualizar mediante API administrativa
+      // Si falló o si era sesión temporal, actualizar la cuenta específica mediante API administrativa
       if (!authUpdated && jwt != null) {
         final adminUrl = '${SupabaseConfig.supabaseUrl}/auth/v1/admin/users/${_currentUser!.id}';
         final resp = await http.put(

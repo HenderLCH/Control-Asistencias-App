@@ -41,15 +41,16 @@ class _JustificationsScreenState extends State<JustificationsScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final auth = context.read<AuthProvider>();
       final studentProvider = context.read<StudentProvider>();
-      if (studentProvider.classrooms.isEmpty) {
-        if (auth.isTeacher && auth.currentUser?.id != null) {
-          await studentProvider.loadClassroomsForTeacher(auth.currentUser!.id);
-        } else {
-          await studentProvider.loadClassrooms();
+      if (auth.isTeacher && auth.currentUser?.id != null) {
+        await studentProvider.loadClassroomsForTeacher(auth.currentUser!.id);
+        final myClassrooms = studentProvider.classrooms
+            .where((c) => c.teacherId == auth.currentUser?.id)
+            .toList();
+        if (myClassrooms.isNotEmpty) {
+          _selectedClassroomId = myClassrooms.first.id;
         }
-      }
-      if (auth.isTeacher && studentProvider.classrooms.isNotEmpty) {
-        _selectedClassroomId = studentProvider.classrooms.first.id;
+      } else if (studentProvider.classrooms.isEmpty) {
+        await studentProvider.loadClassrooms();
       }
       await _loadJustifications();
     });
@@ -93,9 +94,30 @@ class _JustificationsScreenState extends State<JustificationsScreen> {
     if (!mounted) return;
     setState(() => _isLoading = true);
 
+    final auth = context.read<AuthProvider>();
+    final studentProvider = context.read<StudentProvider>();
+    String? targetClassroomId = _selectedClassroomId;
+
+    if (auth.isTeacher) {
+      final myClassrooms = studentProvider.classrooms
+          .where((c) => c.teacherId == auth.currentUser?.id)
+          .toList();
+      if (myClassrooms.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _rawRecords = [];
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+      targetClassroomId = myClassrooms.first.id;
+      _selectedClassroomId = targetClassroomId;
+    }
+
     final attendanceProvider = context.read<AttendanceProvider>();
     final records = await attendanceProvider.fetchJustifiedRecords(
-      classroomId: _selectedClassroomId,
+      classroomId: targetClassroomId,
       startDate: _effectiveFromDate,
       endDate: _effectiveToDate,
     );
@@ -197,7 +219,11 @@ class _JustificationsScreenState extends State<JustificationsScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final studentProvider = context.watch<StudentProvider>();
-    final classrooms = studentProvider.classrooms;
+    final classrooms = auth.isTeacher
+        ? studentProvider.classrooms
+            .where((c) => c.teacherId == auth.currentUser?.id)
+            .toList()
+        : studentProvider.classrooms;
     final grouped = _buildGroupedJustifications(classrooms);
 
     // Agrupar por salón para mostrar secciones claras por aula
@@ -573,10 +599,14 @@ class _JustificationsScreenState extends State<JustificationsScreen> {
     String? initialRawNotes,
   }) async {
     final auth = context.read<AuthProvider>();
-    final canEditPastDays = auth.isAdmin || auth.isCoordinator;
+    final canEditPastDays = auth.isAdmin || auth.isCoordinator || auth.isTeacher;
     final studentProvider = context.read<StudentProvider>();
     final attendanceProvider = context.read<AttendanceProvider>();
-    final classrooms = studentProvider.classrooms;
+    final classrooms = auth.isTeacher
+        ? studentProvider.classrooms
+            .where((c) => c.teacherId == auth.currentUser?.id)
+            .toList()
+        : studentProvider.classrooms;
 
     String? selectedClassroomId = preselectedClassroomId ??
         _selectedClassroomId ??

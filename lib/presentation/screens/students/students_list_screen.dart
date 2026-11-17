@@ -57,6 +57,18 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
     final auth = context.watch<AuthProvider>();
     final classroom = provider.getClassroom(widget.classroomId);
 
+    // Protección de acceso: Un profesor solo puede acceder a su salón asignado
+    if (auth.isTeacher && classroom != null && classroom.teacherId != auth.currentUser?.id) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) context.go('/dashboard');
+      });
+      return const Scaffold(
+        body: Center(
+          child: Text('No tienes permiso para acceder a este salón.'),
+        ),
+      );
+    }
+
     return PopScope(
       canPop: !auth.isTeacher,
       onPopInvokedWithResult: (didPop, result) {

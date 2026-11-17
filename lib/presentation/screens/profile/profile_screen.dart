@@ -683,6 +683,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _getRoleLabel(String role) {
     switch (role) {
       case 'administrador': return 'Administrador';
+      case 'director': return 'Director';
       case 'coordinador': return 'Coordinador';
       case 'profesor': return 'Profesor';
       default: return role;

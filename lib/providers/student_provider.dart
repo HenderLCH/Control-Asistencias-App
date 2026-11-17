@@ -14,7 +14,9 @@ class StudentProvider extends ChangeNotifier {
   String? _error;
 
   List<Student> get students => _students;
-  List<Classroom> get classrooms => _classrooms;
+  List<Classroom> get classrooms => _activeTeacherId != null
+      ? _classrooms.where((c) => c.teacherId == _activeTeacherId).toList()
+      : _classrooms;
   bool get isLoading => _isLoading;
   String? get error => _error;
 
@@ -133,7 +135,8 @@ class StudentProvider extends ChangeNotifier {
       }
 
       if (data != null && data is List) {
-        _classrooms = await _mapClassroomsWithTeachers(data);
+        final mapped = await _mapClassroomsWithTeachers(data);
+        _classrooms = mapped.where((c) => c.teacherId == teacherId).toList();
       }
     } catch (e) {
       _error = e.toString();

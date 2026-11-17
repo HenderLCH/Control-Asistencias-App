@@ -4,7 +4,7 @@ class UserProfile extends Equatable {
   final String id;
   final String email;
   final String fullName;
-  final String role; // administrador, coordinador, profesor
+  final String role; // administrador, director, coordinador, profesor
   final String? avatarUrl;
   final String? phone;
   final bool isActive;
@@ -26,6 +26,7 @@ class UserProfile extends Equatable {
     final cleaned = rawPhone
         .replaceAll(RegExp(r'\[RESET_REQ\]'), '')
         .replaceAll(RegExp(r'\[(?:TEMP_PWD|PWD):[^\]]+\]'), '')
+        .replaceAll(RegExp(r'\[ROLE:[^\]]+\]'), '')
         .replaceAll('[FORCE_PWD_CHANGE]', '')
         .trim();
     return cleaned.isEmpty ? null : cleaned;
@@ -35,11 +36,15 @@ class UserProfile extends Equatable {
 
   factory UserProfile.fromMap(Map<String, dynamic> map) {
     final rawPhone = map['phone'] as String?;
+    String resolvedRole = (map['role'] as String? ?? 'profesor').trim().toLowerCase();
+    if (rawPhone != null && rawPhone.contains('[ROLE:director]')) {
+      resolvedRole = 'director';
+    }
     return UserProfile(
       id: map['id'] as String,
       email: map['email'] as String,
       fullName: map['full_name'] as String,
-      role: map['role'] as String,
+      role: resolvedRole,
       avatarUrl: map['avatar_url'] as String?,
       phone: rawPhone,
       isActive: map['is_active'] as bool? ?? true,
@@ -85,7 +90,9 @@ class UserProfile extends Equatable {
   }
 
   bool get isAdmin => role == 'administrador';
-  bool get isCoordinator => role == 'coordinador';
+  bool get isDirector => role == 'director';
+  // El rol Director comparte las mismas funcionalidades de supervisión que el Coordinador
+  bool get isCoordinator => role == 'coordinador' || role == 'director';
   bool get isTeacher => role == 'profesor';
   bool get canManageUsers => isAdmin;
   bool get canImportData => isAdmin;
@@ -119,6 +126,7 @@ class UserProfile extends Equatable {
     final cleaned = phone!
         .replaceAll(RegExp(r'\[RESET_REQ\]'), '')
         .replaceAll(RegExp(r'\[(?:TEMP_PWD|PWD):[^\]]+\]'), '')
+        .replaceAll(RegExp(r'\[ROLE:[^\]]+\]'), '')
         .replaceAll('[FORCE_PWD_CHANGE]', '')
         .trim();
     return cleaned.isEmpty ? null : cleaned;

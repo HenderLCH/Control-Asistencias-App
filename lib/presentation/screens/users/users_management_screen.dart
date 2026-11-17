@@ -43,7 +43,7 @@ class _UsersManagementScreenState extends State<UsersManagementScreen>
     if (tabIndex == 1) {
       filtered = filtered.where((u) => u.role == 'profesor').toList();
     } else if (tabIndex == 2) {
-      filtered = filtered.where((u) => u.role == 'coordinador').toList();
+      filtered = filtered.where((u) => u.role == 'coordinador' || u.role == 'director').toList();
     } else if (tabIndex == 3) {
       filtered = filtered.where((u) => u.role == 'administrador').toList();
     }
@@ -288,6 +288,8 @@ class _UserTileState extends State<_UserTile> {
     switch (role) {
       case 'administrador':
         return AppTheme.primary;
+      case 'director':
+        return const Color(0xFF7C3AED);
       case 'coordinador':
         return AppTheme.secondary;
       case 'profesor':
@@ -301,6 +303,8 @@ class _UserTileState extends State<_UserTile> {
     switch (role) {
       case 'administrador':
         return 'Administrador';
+      case 'director':
+        return 'Director';
       case 'coordinador':
         return 'Coordinador';
       case 'profesor':
@@ -598,6 +602,11 @@ class _UserTileState extends State<_UserTile> {
                     for (final c in studentProvider.classrooms.where((c) => c.teacherId == user.id)) {
                       await studentProvider.assignTeacherToClassroom(c.id, null);
                     }
+                  } else if (value == 'role_director') {
+                    await context.read<UserProvider>().updateUserRole(user.id, 'director');
+                    for (final c in studentProvider.classrooms.where((c) => c.teacherId == user.id)) {
+                      await studentProvider.assignTeacherToClassroom(c.id, null);
+                    }
                   } else if (value == 'role_administrador') {
                     await context.read<UserProvider>().updateUserRole(user.id, 'administrador');
                     for (final c in studentProvider.classrooms.where((c) => c.teacherId == user.id)) {
@@ -668,6 +677,16 @@ class _UserTileState extends State<_UserTile> {
                         const Icon(Icons.manage_accounts_outlined, size: 18),
                         const SizedBox(width: 8),
                         Text(user.role == 'coordinador' ? '✓ Coordinador' : 'Hacer Coordinador'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'role_director',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.workspace_premium_outlined, size: 18),
+                        const SizedBox(width: 8),
+                        Text(user.role == 'director' ? '✓ Director' : 'Hacer Director'),
                       ],
                     ),
                   ),
@@ -1057,6 +1076,7 @@ class _EditUserBottomSheetState extends State<_EditUserBottomSheet> {
                 items: const [
                   DropdownMenuItem(value: 'profesor', child: Text('Profesor')),
                   DropdownMenuItem(value: 'coordinador', child: Text('Coordinador')),
+                  DropdownMenuItem(value: 'director', child: Text('Director')),
                   DropdownMenuItem(value: 'administrador', child: Text('Administrador')),
                 ],
                 onChanged: (v) {
@@ -1784,6 +1804,10 @@ class _CreateUserBottomSheetState extends State<_CreateUserBottomSheet> {
                   DropdownMenuItem(
                     value: 'coordinador',
                     child: Text('Coordinador'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'director',
+                    child: Text('Director'),
                   ),
                   DropdownMenuItem(
                     value: 'administrador',

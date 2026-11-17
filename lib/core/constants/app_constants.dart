@@ -20,6 +20,7 @@ class AppConstants {
 
   // Roles
   static const String roleAdmin = 'administrador';
+  static const String roleDirector = 'director';
   static const String roleCoordinator = 'coordinador';
   static const String roleTeacher = 'profesor';
 

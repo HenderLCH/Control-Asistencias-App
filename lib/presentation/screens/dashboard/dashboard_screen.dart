@@ -88,6 +88,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       subtitle = 'Panel de Gestión y Control Institucional';
       icon = Icons.admin_panel_settings_rounded;
       accentColor = AppTheme.primary;
+    } else if (user?.role == 'director') {
+      welcomeTitle = 'Bienvenido/a Dir. ${user?.fullName ?? ""}';
+      subtitle = 'Dirección y Supervisión General de Asistencias';
+      icon = Icons.workspace_premium_rounded;
+      accentColor = const Color(0xFF7C3AED);
     } else if (user?.role == 'coordinador') {
       welcomeTitle = 'Bienvenido/a Coord. ${user?.fullName ?? ""}';
       subtitle = 'Supervisión General de Asistencias y Salones';
@@ -414,7 +419,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // Classrooms list
+                // Classrooms list (Profesores solo pueden ver su salón asignado)
                 if (students.isLoading)
                   const Center(
                     child: Padding(
@@ -425,21 +430,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                   )
-                else if (students.classrooms.isEmpty)
-                  _EmptyClassrooms(isAdmin: auth.isAdmin)
-                else
-                  ...students.classrooms
-                      .asMap()
-                      .entries
-                      .map(
-                        (entry) => Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _ClassroomCard(
-                            classroom: entry.value,
-                            index: entry.key,
-                          ),
-                        ),
-                      ),
+                else ...[
+                  Builder(
+                    builder: (context) {
+                      final visibleClassrooms = auth.isTeacher
+                          ? students.classrooms
+                              .where((c) => c.teacherId == auth.currentUser?.id)
+                              .toList()
+                          : students.classrooms;
+                      if (visibleClassrooms.isEmpty) {
+                        return _EmptyClassrooms(isAdmin: auth.isAdmin);
+                      }
+                      return Column(
+                        children: visibleClassrooms
+                            .asMap()
+                            .entries
+                            .map(
+                              (entry) => Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: _ClassroomCard(
+                                  classroom: entry.value,
+                                  index: entry.key,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      );
+                    },
+                  ),
+                ],
 
                 const SizedBox(height: 80),
               ]),
@@ -454,6 +473,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     switch (role) {
       case 'administrador':
         return 'Admin';
+      case 'director':
+        return 'Director';
       case 'coordinador':
         return 'Coord.';
       case 'profesor':

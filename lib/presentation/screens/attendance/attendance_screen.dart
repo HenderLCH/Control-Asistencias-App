@@ -613,6 +613,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final classroom = studentProvider.getClassroom(widget.classroomId);
     final students = studentProvider.students;
 
+    // Protección de acceso: Un profesor solo puede acceder a su salón asignado
+    if (auth.isTeacher && classroom != null && classroom.teacherId != auth.currentUser?.id) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) context.go('/dashboard');
+      });
+      return const Scaffold(
+        body: Center(
+          child: Text('No tienes permiso para acceder a este salón.'),
+        ),
+      );
+    }
+
     final isToday = DateUtils.isSameDay(_selectedDate, DateTime.now());
     // Profesores, coordinadores y administrador pueden registrar y editar días anteriores
     final canMark = isToday || auth.isTeacher || auth.isAdmin || auth.isCoordinator;

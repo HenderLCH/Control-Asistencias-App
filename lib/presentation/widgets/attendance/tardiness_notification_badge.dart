@@ -192,8 +192,26 @@ class _TardinessAlertsSheetState extends State<_TardinessAlertsSheet>
     final attendance = context.watch<AttendanceProvider>();
     final userProvider = context.watch<UserProvider>();
     final auth = context.watch<AuthProvider>();
-    final citations = attendance.citations;
-    final warnings = attendance.warnings;
+    final studentProv = context.watch<StudentProvider>();
+
+    final isTeacher = auth.isTeacher;
+    final teacherClassroomIds = isTeacher
+        ? studentProv.classrooms
+            .where((c) => c.teacherId == auth.currentUser?.id)
+            .map((c) => c.id)
+            .toSet()
+        : <String>{};
+
+    final citations = isTeacher
+        ? attendance.citations
+            .where((a) => teacherClassroomIds.contains(a.classroomId))
+            .toList()
+        : attendance.citations;
+    final warnings = isTeacher
+        ? attendance.warnings
+            .where((a) => teacherClassroomIds.contains(a.classroomId))
+            .toList()
+        : attendance.warnings;
 
     final pendingPasswordUsers = auth.isAdmin
         ? userProvider.users.where((u) =>
@@ -340,8 +358,8 @@ class _TardinessAlertsSheetState extends State<_TardinessAlertsSheet>
               ),
             ),
 
-          // Salones con asistencia completada hoy para Coordinador y Administrador
-          if (attendance.completedClassroomNamesToday.isNotEmpty)
+          // Salones con asistencia completada hoy (Solo para Director, Coordinador y Administrador)
+          if (!isTeacher && attendance.completedClassroomNamesToday.isNotEmpty)
             Container(
               margin: const EdgeInsets.fromLTRB(20, 0, 20, 12),
               padding: const EdgeInsets.all(12),

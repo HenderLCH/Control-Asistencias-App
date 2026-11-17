@@ -22,10 +22,13 @@ class UserProvider extends ChangeNotifier {
       _users.where((u) => u.role == 'profesor').toList();
 
   List<UserProfile> get coordinators =>
-      _users.where((u) => u.role == 'coordinador').toList();
+      _users.where((u) => u.role == 'coordinador' || u.role == 'director').toList();
+
+  List<UserProfile> get directors =>
+      _users.where((u) => u.role == 'director').toList();
 
   List<UserProfile> get staffAndTeachers =>
-      _users.where((u) => u.role == 'profesor' || u.role == 'coordinador').toList();
+      _users.where((u) => u.role == 'profesor' || u.role == 'coordinador' || u.role == 'director').toList();
 
   final SupabaseClient _supabase = Supabase.instance.client;
 
@@ -94,13 +97,17 @@ class UserProvider extends ChangeNotifier {
         authOptions: const AuthClientOptions(authFlowType: AuthFlowType.implicit),
       );
 
+      final dbRole = role == 'director' ? 'coordinador' : role;
+      final roleTag = role == 'director' ? '[ROLE:director]' : '';
+      final effectivePhone = '$roleTag${phone ?? ''}'.trim();
+
       final response = await authClient.auth.signUp(
         email: email,
         password: password,
         data: {
           'full_name': fullName,
-          'role': role,
-          'phone': phone ?? '',
+          'role': dbRole,
+          'phone': effectivePhone,
         },
       );
 
@@ -112,8 +119,8 @@ class UserProvider extends ChangeNotifier {
             'id': newUserId,
             'email': email,
             'full_name': fullName,
-            'role': role,
-            'phone': phone,
+            'role': dbRole,
+            'phone': effectivePhone.isEmpty ? null : effectivePhone,
             'is_active': true,
           });
         } catch (_) {}
@@ -178,25 +185,35 @@ class UserProvider extends ChangeNotifier {
         );
       }
 
-      // 2. Construir el campo phone con las marcas [PWD:...] y [FORCE_PWD_CHANGE] si corresponde
-      String? updatedPhone = phone;
-      if (newPassword != null && newPassword.trim().isNotEmpty) {
-        final cleanBasePhone = (phone ?? '')
-            .replaceAll(RegExp(r'\[RESET_REQ\]'), '')
-            .replaceAll(RegExp(r'\[(?:TEMP_PWD|PWD):[^\]]+\]'), '')
-            .replaceAll('[FORCE_PWD_CHANGE]', '')
-            .trim();
+      // 2. Construir el campo phone con las marcas [ROLE:director], [PWD:...] y [FORCE_PWD_CHANGE] si corresponde
+      final existingUser = _users.where((u) => u.id == userId).firstOrNull;
+      final rawExistingPhone = phone ?? existingUser?.phone ?? '';
+      final cleanBasePhone = rawExistingPhone
+          .replaceAll(RegExp(r'\[RESET_REQ\]'), '')
+          .replaceAll(RegExp(r'\[ROLE:[^\]]+\]'), '')
+          .replaceAll('[FORCE_PWD_CHANGE]', '')
+          .trim();
 
+      final roleTag = role == 'director' ? '[ROLE:director]' : '';
+      String updatedPhone;
+      if (newPassword != null && newPassword.trim().isNotEmpty) {
+        final phoneWithoutPwd = cleanBasePhone
+            .replaceAll(RegExp(r'\[(?:TEMP_PWD|PWD):[^\]]+\]'), '')
+            .trim();
         final pwdTag = '[PWD:${newPassword.trim()}]';
         final forceTag = forcePwdChange ? '[FORCE_PWD_CHANGE]' : '';
-        updatedPhone = '$forceTag$pwdTag$cleanBasePhone';
+        updatedPhone = '$roleTag$forceTag$pwdTag$phoneWithoutPwd';
+      } else {
+        updatedPhone = '$roleTag$cleanBasePhone';
       }
+
+      final dbRole = role == 'director' ? 'coordinador' : role;
 
       // 3. Actualizar perfil en Supabase
       final profilePayload = {
         'full_name': fullName.trim(),
-        'role': role,
-        'phone': updatedPhone,
+        'role': dbRole,
+        'phone': updatedPhone.isEmpty ? null : updatedPhone,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
 
@@ -249,9 +266,20 @@ class UserProvider extends ChangeNotifier {
   /// Cambia el rol de un usuario
   Future<bool> updateUserRole(String userId, String newRole) async {
     try {
+      final existingUser = _users.where((u) => u.id == userId).firstOrNull;
+      final basePhone = (existingUser?.phone ?? '')
+          .replaceAll(RegExp(r'\[ROLE:[^\]]+\]'), '')
+          .trim();
+      final roleTag = newRole == 'director' ? '[ROLE:director]' : '';
+      final updatedPhone = '$roleTag$basePhone';
+      final dbRole = newRole == 'director' ? 'coordinador' : newRole;
+
       await _supabase
           .from('profiles')
-          .update({'role': newRole})
+          .update({
+            'role': dbRole,
+            'phone': updatedPhone.isEmpty ? null : updatedPhone,
+          })
           .eq('id', userId);
       await loadUsers();
       return true;
