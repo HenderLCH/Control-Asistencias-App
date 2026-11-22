@@ -1187,6 +1187,45 @@ class AttendanceProvider extends ChangeNotifier {
         }
         absentStudentsList.sort((a, b) => a.studentName.compareTo(b.studentName));
 
+        // Construir lista consolidada de inasistencias y tardanzas por estudiante (sin repetir nombres)
+        final Map<String, List<DateTime>> absentDatesByStudent = {};
+        final Map<String, List<DateTime>> lateDatesByStudent = {};
+        for (final r in records) {
+          final status = r['status'] as String?;
+          if (status != 'ausente' && status != 'tardanza') continue;
+          final sId = r['student_id'] as String;
+          final parsedDate = DateTime.tryParse(r['date']?.toString() ?? '');
+          if (parsedDate == null) continue;
+          if (status == 'ausente') {
+            absentDatesByStudent.putIfAbsent(sId, () => []).add(parsedDate);
+          } else {
+            lateDatesByStudent.putIfAbsent(sId, () => []).add(parsedDate);
+          }
+        }
+
+        final incidentStudentIds = <String>{
+          ...absentDatesByStudent.keys,
+          ...lateDatesByStudent.keys,
+        };
+        final List<StudentIncidentInfo> incidentStudentsList = [];
+        for (final sId in incidentStudentIds) {
+          final s = studentMap[sId];
+          if (s != null) {
+            final name = '${s['first_name'] ?? ''} ${s['last_name'] ?? ''}'.trim();
+            final aDates = (absentDatesByStudent[sId] ?? [])..sort();
+            final lDates = (lateDatesByStudent[sId] ?? [])..sort();
+            incidentStudentsList.add(StudentIncidentInfo(
+              studentId: sId,
+              studentName: name.isNotEmpty ? name : 'Estudiante',
+              cedula: s['cedula'] as String? ?? '',
+              gender: studentGenderMap[sId] ?? 'M',
+              absentDates: aDates,
+              lateDates: lDates,
+            ));
+          }
+        }
+        incidentStudentsList.sort((a, b) => a.studentName.compareTo(b.studentName));
+
         final distinctDates =
             records.map((r) => r['date'] as String).toSet().length;
 
@@ -1208,6 +1247,7 @@ class AttendanceProvider extends ChangeNotifier {
           justifiedDays: justifiedCount,
           totalDays: distinctDates > 0 ? distinctDates : 1,
           absentStudents: absentStudentsList,
+          incidentStudents: incidentStudentsList,
         ));
       }
 

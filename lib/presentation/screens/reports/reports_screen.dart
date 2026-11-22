@@ -18,6 +18,8 @@ import 'package:contro_asistencias/core/constants/app_constants.dart';
 import 'package:contro_asistencias/data/models/classroom.dart';
 import 'package:contro_asistencias/data/models/attendance_record.dart';
 
+enum _ReportMode { institutional, classroom, incidents }
+
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
 
@@ -26,11 +28,15 @@ class ReportsScreen extends StatefulWidget {
 }
 
 class _ReportsScreenState extends State<ReportsScreen> {
-  // Modalidad: true = Consolidado de los 12 salones, false = Por Salón
-  bool _isInstitutional = true;
+  _ReportMode _reportMode = _ReportMode.institutional;
+  bool get _isInstitutional => _reportMode == _ReportMode.institutional;
+  bool get _isClassroom => _reportMode == _ReportMode.classroom;
+  bool get _isIncidents => _reportMode == _ReportMode.incidents;
+
   String _selectedReportType = AppConstants.reportDaily;
   DateTime _selectedDailyDate = DateTime.now();
   Classroom? _selectedClassroom;
+  Classroom? _selectedIncidentsClassroom; // null = Todos los salones
   bool _showAbsentStudentNames = false; // Opción: visualizar nombres de estudiantes inasistentes
 
   bool _isGenerating = false;
@@ -122,7 +128,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     final attendanceProvider = context.read<AttendanceProvider>();
     final dateRange = _getDateRange();
 
-    if (!_isInstitutional && _selectedClassroom == null) {
+    if (_isClassroom && _selectedClassroom == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Por favor, selecciona un salón para el reporte'),
@@ -140,12 +146,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
           _hasGenerated = false;
         });
 
-        if (_isInstitutional) {
+        if (_isInstitutional || _isIncidents) {
           if (studentProvider.classrooms.isEmpty) {
             await studentProvider.loadClassrooms();
           }
+          final targetClassrooms = (_isIncidents && _selectedIncidentsClassroom != null)
+              ? [_selectedIncidentsClassroom!]
+              : studentProvider.classrooms;
           final summaries = await attendanceProvider.generateInstitutionalReport(
-            classrooms: studentProvider.classrooms,
+            classrooms: targetClassrooms,
             startDate: dateRange.start,
             endDate: dateRange.end,
           );
@@ -171,9 +180,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
           }
         }
       },
-      message: _isInstitutional
-          ? 'Generando reporte institucional (12 salones)...'
-          : 'Generando reporte de ${_selectedClassroom?.displayName}...',
+      message: _isIncidents
+          ? 'Generando reporte de inasistencias y tardanzas...'
+          : _isInstitutional
+              ? 'Generando reporte institucional (12 salones)...'
+              : 'Generando reporte de ${_selectedClassroom?.displayName}...',
     );
   }
 
@@ -416,6 +427,86 @@ class _ReportsScreenState extends State<ReportsScreen> {
     );
   }
 
+  String _formatDatesList(List<DateTime> dates) {
+    if (dates.isEmpty) return '';
+    return dates.map((d) => DateFormat('dd/MM').format(d)).join(', ');
+  }
+
+  // ==========================================
+  // DESCARGA CSV INASISTENCIAS Y TARDANZAS
+  // ==========================================
+  Future<void> _exportIncidentsCsv() async {
+    if (_institutionalData.isEmpty) return;
+
+    await runWithLoading(
+      context,
+      () async {
+        final headerDate = _getHeaderDateTitle();
+        final dateRange = _getDateRange();
+        final periodName = _selectedReportType == AppConstants.reportDaily
+            ? 'Diario_${DateFormat('yyyyMMdd').format(_selectedDailyDate)}'
+            : '${_reportTypeLabel(_selectedReportType)}_${DateFormat('yyyyMMdd').format(dateRange.start)}_al_${DateFormat('yyyyMMdd').format(dateRange.end)}';
+
+        final List<List<dynamic>> rows = [
+          ['COLEGIO NUESTRA SEÑORA DE LA CONSOLACIÓN DE TÁRIBA'],
+          ['REPORTE GENERAL DE INASISTENCIAS Y TARDANZAS POR SALÓN'],
+          ['Fecha / Período:', headerDate],
+          [],
+          [
+            'Salón',
+            'Profesor Titular',
+            'Estudiante',
+            'Cant. Inasistencias',
+            'Días de Inasistencia',
+            'Cant. Tardanzas',
+            'Días de Tardanza',
+          ],
+        ];
+
+        for (final s in _institutionalData) {
+          if (s.incidentStudents.isEmpty) {
+            rows.add([
+              s.displayName,
+              s.teacherName ?? 'Sin asignar',
+              'Sin novedades en el período',
+              0,
+              '-',
+              0,
+              '-',
+            ]);
+            continue;
+          }
+          for (final st in s.incidentStudents) {
+            rows.add([
+              s.displayName,
+              s.teacherName ?? 'Sin asignar',
+              st.studentName,
+              st.absentCount,
+              st.absentDates.isEmpty ? '-' : _formatDatesList(st.absentDates),
+              st.lateCount,
+              st.lateDates.isEmpty ? '-' : _formatDatesList(st.lateDates),
+            ]);
+          }
+        }
+
+        final csvString = const ListToCsvConverter().convert(rows);
+        final bom = [0xEF, 0xBB, 0xBF];
+        final bytes = [...bom, ...utf8.encode(csvString)];
+        downloadFileBytes(bytes, 'Reporte_Inasistencias_Tardanzas_$periodName.csv');
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Descargando CSV de inasistencias y tardanzas...'),
+              backgroundColor: AppTheme.success,
+            ),
+          );
+        }
+      },
+      message: 'Exportando CSV de inasistencias y tardanzas...',
+    );
+  }
+
   // ==========================================
   // EXPORTAR PDF
   // ==========================================
@@ -585,6 +676,131 @@ class _ReportsScreenState extends State<ReportsScreen> {
         onLayout: (format) => pdf.save(),
         name: 'Reporte_General_12_Salones.pdf',
       );
+    } else if (_isIncidents) {
+      if (_institutionalData.isEmpty) return;
+      final headerDate = _getHeaderDateTitle();
+      final isDaily = _selectedReportType == AppConstants.reportDaily;
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(24),
+          header: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  if (logoBytes != null)
+                    pw.Image(pw.MemoryImage(logoBytes), width: 34, height: 34),
+                  pw.Expanded(
+                    child: pw.Padding(
+                      padding: const pw.EdgeInsets.symmetric(horizontal: 10),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(
+                            AppConstants.institutionName,
+                            style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900),
+                          ),
+                          pw.Text(
+                            'REPORTE GENERAL DE INASISTENCIAS Y TARDANZAS POR SALÓN',
+                            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  pw.Text(
+                    headerDate,
+                    style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900),
+                  ),
+                ],
+              ),
+              pw.Divider(),
+            ],
+          ),
+          build: (context) {
+            final widgets = <pw.Widget>[];
+            for (final s in _institutionalData) {
+              final teacherLabel = (s.teacherName != null && s.teacherName!.trim().isNotEmpty)
+                  ? 'Prof. ${s.teacherName!.trim()}'
+                  : 'Sin docente asignado';
+              widgets.add(
+                pw.Container(
+                  margin: const pw.EdgeInsets.only(top: 10, bottom: 4),
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: const pw.BoxDecoration(color: PdfColors.blue50),
+                  child: pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        '${s.displayName} ($teacherLabel)',
+                        style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900),
+                      ),
+                      pw.Text(
+                        'Inasistencias: ${s.absentDays}  |  Tardanzas: ${s.lateDays}',
+                        style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey800),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+
+              if (s.incidentStudents.isEmpty) {
+                widgets.add(
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(left: 8, bottom: 6),
+                    child: pw.Text(
+                      'Sin inasistencias ni tardanzas registradas en este período.',
+                      style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey600),
+                    ),
+                  ),
+                );
+              } else {
+                widgets.add(
+                  pw.Table.fromTextArray(
+                    headers: [
+                      'Estudiante',
+                      isDaily ? 'Inasistencia' : 'Inasistencias (Días)',
+                      isDaily ? 'Tardanza' : 'Tardanzas (Días)',
+                    ],
+                    data: s.incidentStudents.map((st) {
+                      final absText = st.absentDates.isEmpty
+                          ? '-'
+                          : isDaily
+                              ? 'Inasistente'
+                              : '${st.absentCount} (${_formatDatesList(st.absentDates)})';
+                      final lateText = st.lateDates.isEmpty
+                          ? '-'
+                          : isDaily
+                              ? 'Tardanza'
+                              : '${st.lateCount} (${_formatDatesList(st.lateDates)})';
+                      return [st.studentName, absText, lateText];
+                    }).toList(),
+                    headerStyle: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+                    headerDecoration: const pw.BoxDecoration(color: PdfColors.blue800),
+                    cellStyle: const pw.TextStyle(fontSize: 8.5),
+                    cellPadding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    columnWidths: {
+                      0: const pw.FlexColumnWidth(2.2),
+                      1: const pw.FlexColumnWidth(2.0),
+                      2: const pw.FlexColumnWidth(2.0),
+                    },
+                  ),
+                );
+              }
+            }
+            return widgets;
+          },
+        ),
+      );
+
+      await Printing.layoutPdf(
+        onLayout: (format) => pdf.save(),
+        name: 'Reporte_Inasistencias_Tardanzas.pdf',
+      );
     } else {
       if (_classroomData.isEmpty || _selectedClassroom == null) return;
       pdf.addPage(
@@ -659,7 +875,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
             IconButton(
               icon: const Icon(Icons.download_rounded),
               tooltip: 'Descargar CSV',
-              onPressed: _isInstitutional ? _exportInstitutionalCsv : _exportClassroomCsv,
+              onPressed: _isIncidents
+                  ? _exportIncidentsCsv
+                  : _isInstitutional
+                      ? _exportInstitutionalCsv
+                      : _exportClassroomCsv,
             ),
             IconButton(
               icon: const Icon(Icons.picture_as_pdf_rounded),
@@ -687,13 +907,13 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   Expanded(
                     child: InkWell(
                       onTap: () => setState(() {
-                        _isInstitutional = true;
+                        _reportMode = _ReportMode.institutional;
                         _hasGenerated = false;
                       }),
                       borderRadius: BorderRadius.circular(10),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                         decoration: BoxDecoration(
                           color: _isInstitutional ? AppTheme.primary : Colors.transparent,
                           borderRadius: BorderRadius.circular(10),
@@ -703,17 +923,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           children: [
                             Icon(
                               Icons.school_rounded,
-                              size: 18,
+                              size: 16,
                               color: _isInstitutional ? Colors.white : AppTheme.textSecondary,
                             ),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 4),
                             Flexible(
                               child: Text(
-                                'Consolidado (12 Salones)',
+                                'Consolidado',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 12.5,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w700,
                                   color: _isInstitutional ? Colors.white : AppTheme.textSecondary,
                                 ),
@@ -727,15 +947,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   Expanded(
                     child: InkWell(
                       onTap: () => setState(() {
-                        _isInstitutional = false;
+                        _reportMode = _ReportMode.classroom;
                         _hasGenerated = false;
                       }),
                       borderRadius: BorderRadius.circular(10),
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                         decoration: BoxDecoration(
-                          color: !_isInstitutional ? AppTheme.primary : Colors.transparent,
+                          color: _isClassroom ? AppTheme.primary : Colors.transparent,
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Row(
@@ -743,19 +963,59 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           children: [
                             Icon(
                               Icons.class_rounded,
-                              size: 18,
-                              color: !_isInstitutional ? Colors.white : AppTheme.textSecondary,
+                              size: 16,
+                              color: _isClassroom ? Colors.white : AppTheme.textSecondary,
                             ),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 4),
                             Flexible(
                               child: Text(
                                 'Por Salón',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 12.5,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w700,
-                                  color: !_isInstitutional ? Colors.white : AppTheme.textSecondary,
+                                  color: _isClassroom ? Colors.white : AppTheme.textSecondary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => setState(() {
+                        _reportMode = _ReportMode.incidents;
+                        _hasGenerated = false;
+                      }),
+                      borderRadius: BorderRadius.circular(10),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: _isIncidents ? AppTheme.primary : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.event_busy_rounded,
+                              size: 16,
+                              color: _isIncidents ? Colors.white : AppTheme.textSecondary,
+                            ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                'Faltas / Tard.',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: _isIncidents ? Colors.white : AppTheme.textSecondary,
                                 ),
                               ),
                             ),
@@ -867,8 +1127,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     ),
                   ],
 
-                  // Selector de salón si no es institucional
-                  if (!_isInstitutional) ...[
+                  // Selector de salón si es Por Salón
+                  if (_isClassroom) ...[
                     const SizedBox(height: 14),
                     DropdownButtonFormField<Classroom>(
                       value: _selectedClassroom,
@@ -884,6 +1144,34 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           .toList(),
                       onChanged: (c) => setState(() {
                         _selectedClassroom = c;
+                        _hasGenerated = false;
+                      }),
+                    ),
+                  ],
+
+                  // Filtro opcional de salón en modo Inasistencias y Tardanzas
+                  if (_isIncidents) ...[
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<Classroom?>(
+                      value: _selectedIncidentsClassroom,
+                      decoration: const InputDecoration(
+                        labelText: 'Salón (opcional)',
+                        prefixIcon: Icon(Icons.filter_list_rounded),
+                      ),
+                      items: [
+                        const DropdownMenuItem<Classroom?>(
+                          value: null,
+                          child: Text('Todos los salones (12)'),
+                        ),
+                        ...studentProvider.classrooms.map(
+                          (c) => DropdownMenuItem<Classroom?>(
+                            value: c,
+                            child: Text(c.displayName),
+                          ),
+                        ),
+                      ],
+                      onChanged: (c) => setState(() {
+                        _selectedIncidentsClassroom = c;
                         _hasGenerated = false;
                       }),
                     ),
@@ -908,9 +1196,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
                           : const Icon(Icons.analytics_rounded),
                       label: Text(_isGenerating
                           ? 'Generando...'
-                          : _isInstitutional
-                              ? 'Generar Reporte de los 12 Salones'
-                              : 'Generar Reporte del Salón'),
+                          : _isIncidents
+                              ? 'Generar Reporte de Faltas y Tardanzas'
+                              : _isInstitutional
+                                  ? 'Generar Reporte de los 12 Salones'
+                                  : 'Generar Reporte del Salón'),
                     ),
                   ),
                 ],
@@ -958,7 +1248,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 10),
                             ),
-                            onPressed: _isInstitutional ? _exportInstitutionalCsv : _exportClassroomCsv,
+                            onPressed: _isIncidents
+                                ? _exportIncidentsCsv
+                                : _isInstitutional
+                                    ? _exportInstitutionalCsv
+                                    : _exportClassroomCsv,
                             icon: const Icon(Icons.table_view_rounded, size: 18),
                             label: const Text(
                               'Descargar CSV',
@@ -988,6 +1282,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
               // RENDER DE RESULTADOS
               if (_isInstitutional)
                 _buildInstitutionalView()
+              else if (_isIncidents)
+                _buildIncidentsView()
               else
                 _buildClassroomView(),
             ],
@@ -1588,6 +1884,232 @@ class _ReportsScreenState extends State<ReportsScreen> {
             );
           }),
         ],
+      ],
+    );
+  }
+
+  // ==========================================
+  // VISTA GENERAL DE INASISTENCIAS Y TARDANZAS POR SALÓN
+  // ==========================================
+  Widget _buildIncidentsView() {
+    if (_institutionalData.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Theme.of(context).dividerColor),
+        ),
+        child: const Center(
+          child: Text(
+            'No hay datos disponibles para este período.',
+            style: TextStyle(color: AppTheme.textSecondary),
+          ),
+        ),
+      );
+    }
+
+    final isDaily = _selectedReportType == AppConstants.reportDaily;
+    int totalAbsences = 0;
+    int totalLates = 0;
+    for (final s in _institutionalData) {
+      totalAbsences += s.absentDays;
+      totalLates += s.lateDays;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Inasistencias y Tardanzas por Salón (${_getHeaderDateTitle()})',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Resumen separado de Inasistencias y Tardanzas (sin sumarlas)
+        Row(
+          children: [
+            _KpiCard(
+              title: 'Inasistencias',
+              value: '$totalAbsences',
+              subtitle: 'Total del período',
+              color: AppTheme.absent,
+              icon: Icons.cancel_outlined,
+            ),
+            const SizedBox(width: 10),
+            _KpiCard(
+              title: 'Tardanzas',
+              value: '$totalLates',
+              subtitle: 'Total del período',
+              color: AppTheme.late,
+              icon: Icons.schedule_rounded,
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        ..._institutionalData.map((s) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Theme.of(context).dividerColor),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            s.displayNameWithTeacher,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13.5,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (s.absentDays > 0) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.absent.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${s.absentDays} Inasist.',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.absent,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    if (s.lateDays > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.late.withOpacity(0.14),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${s.lateDays} Tard.',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.late,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                if (s.incidentStudents.isEmpty)
+                  const Text(
+                    'Sin inasistencias ni tardanzas en este período.',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontStyle: FontStyle.italic,
+                      color: AppTheme.textSecondary,
+                    ),
+                  )
+                else
+                  ...s.incidentStudents.map((st) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Theme.of(context).dividerColor.withOpacity(0.6),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            st.studentName,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                          if (st.absentDates.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(
+                                  Icons.cancel_outlined,
+                                  size: 14,
+                                  color: AppTheme.absent,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    isDaily
+                                        ? 'Inasistencia'
+                                        : 'Inasistencias (${st.absentCount}): ${_formatDatesList(st.absentDates)}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.absent,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          if (st.lateDates.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(
+                                  Icons.schedule_rounded,
+                                  size: 14,
+                                  color: AppTheme.late,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    isDaily
+                                        ? 'Tardanza'
+                                        : 'Tardanzas (${st.lateCount}): ${_formatDatesList(st.lateDates)}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.late,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          );
+        }),
       ],
     );
   }

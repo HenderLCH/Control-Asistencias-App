@@ -138,6 +138,29 @@ class AbsentStudentInfo {
   String get genderBadge => gender == 'F' ? 'H' : 'V';
 }
 
+/// Detalle agrupado por estudiante de sus días de inasistencia y tardanza en un período
+class StudentIncidentInfo {
+  final String studentId;
+  final String studentName;
+  final String cedula;
+  final String gender; // 'M' o 'F'
+  final List<DateTime> absentDates;
+  final List<DateTime> lateDates;
+
+  const StudentIncidentInfo({
+    required this.studentId,
+    required this.studentName,
+    this.cedula = '',
+    this.gender = 'M',
+    this.absentDates = const [],
+    this.lateDates = const [],
+  });
+
+  int get absentCount => absentDates.length;
+  int get lateCount => lateDates.length;
+  String get genderBadge => gender == 'F' ? 'H' : 'V';
+}
+
 /// Resumen de asistencia consolidado por salón para el reporte de los 12 salones
 class ClassroomAttendanceSummary {
   final String classroomId;
@@ -157,6 +180,7 @@ class ClassroomAttendanceSummary {
   final int justifiedDays;     // Justificados
   final int totalDays;
   final List<AbsentStudentInfo> absentStudents;
+  final List<StudentIncidentInfo> incidentStudents;
 
   const ClassroomAttendanceSummary({
     required this.classroomId,
@@ -176,6 +200,7 @@ class ClassroomAttendanceSummary {
     required this.justifiedDays,
     required this.totalDays,
     this.absentStudents = const [],
+    this.incidentStudents = const [],
   });
 
   String get displayName => '$grade - Sección $section';
