@@ -33,6 +33,10 @@ class AuthProvider extends ChangeNotifier {
   bool _isTempLogin = false;
   static const String _explicitLoginEmailKey = 'cnsc_explicit_login_email';
   static const String _explicitLoginUidKey = 'cnsc_explicit_login_uid';
+  static const String _persistedUserJsonKey = 'cnsc_persisted_user_json';
+  static const String rememberMeKey = 'cnsc_remember_me';
+  static const String savedEmailKey = 'cnsc_saved_email';
+  static const String savedPasswordKey = 'cnsc_saved_password';
 
   final SupabaseClient _supabase = Supabase.instance.client;
 
@@ -47,16 +51,91 @@ class AuthProvider extends ChangeNotifier {
           event.event == AuthChangeEvent.userUpdated) {
         await _loadUserProfile(event.session?.user);
       } else if (event.event == AuthChangeEvent.signedOut) {
-        _currentUser = null;
-        notifyListeners();
+        if (!_isTempLogin) {
+          _currentUser = null;
+          notifyListeners();
+        }
       }
     });
 
-    // Check current session
+    // Check current session or persisted session ("Recordarme")
     final currentSession = _supabase.auth.currentSession;
     if (currentSession != null) {
       _loadUserProfile(currentSession.user);
+    } else {
+      _restorePersistedSession();
     }
+  }
+
+  Future<void> _restorePersistedSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final remember = prefs.getBool(rememberMeKey) ?? true;
+      if (!remember) return;
+
+      final rawJson = prefs.getString(_persistedUserJsonKey);
+      if (rawJson == null || rawJson.isEmpty) return;
+
+      final map = jsonDecode(rawJson) as Map<String, dynamic>;
+      final restoredUser = UserProfile.fromMap(map);
+      final adminEmail = SupabaseConfig.adminServiceEmail.trim().toLowerCase();
+      final explicitEmail = prefs.getString(_explicitLoginEmailKey)?.toLowerCase();
+
+      if (adminEmail.isNotEmpty &&
+          restoredUser.email.trim().toLowerCase() == adminEmail &&
+          explicitEmail != adminEmail) {
+        await prefs.remove(_persistedUserJsonKey);
+        return;
+      }
+
+      _isTempLogin = true;
+      _currentUser = restoredUser;
+      notifyListeners();
+
+      // Refrescar perfil en segundo plano desde Supabase para mantener rol/datos al día
+      final jwt = await PasswordManagementService.getAdminJwt();
+      if (jwt != null && !restoredUser.id.startsWith('temp_')) {
+        final resp = await http.get(
+          Uri.parse('${SupabaseConfig.supabaseUrl}/rest/v1/profiles?id=eq.${restoredUser.id}&select=*'),
+          headers: {
+            'apikey': SupabaseConfig.supabaseAnonKey,
+            'Authorization': 'Bearer $jwt',
+          },
+        );
+        if (resp.statusCode == 200) {
+          final list = jsonDecode(resp.body) as List;
+          if (list.isNotEmpty) {
+            final freshMap = {
+              ...(list.first as Map<String, dynamic>),
+              'email': restoredUser.email,
+            };
+            final freshUser = UserProfile.fromMap(freshMap);
+            if (!freshUser.isActive) {
+              await signOut();
+              return;
+            }
+            _currentUser = freshUser;
+            await prefs.setString(_persistedUserJsonKey, jsonEncode(freshUser.toMap()));
+            notifyListeners();
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error restoring persisted session: $e');
+    }
+  }
+
+  Future<void> _persistCurrentUserIfRemembered() async {
+    if (_currentUser == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final remember = prefs.getBool(rememberMeKey) ?? true;
+      if (remember) {
+        await prefs.setString(_persistedUserJsonKey, jsonEncode(_currentUser!.toMap()));
+      } else {
+        await prefs.remove(_persistedUserJsonKey);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadUserProfile(User? user) async {
@@ -151,7 +230,11 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> signIn({required String email, required String password}) async {
+  Future<bool> signIn({
+    required String email,
+    required String password,
+    bool rememberMe = true,
+  }) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -161,6 +244,15 @@ class AuthProvider extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_explicitLoginEmailKey, cleanEmail);
+      await prefs.setBool(rememberMeKey, rememberMe);
+      if (rememberMe) {
+        await prefs.setString(savedEmailKey, cleanEmail);
+        await prefs.setString(savedPasswordKey, password);
+      } else {
+        await prefs.remove(savedEmailKey);
+        await prefs.remove(savedPasswordKey);
+        await prefs.remove(_persistedUserJsonKey);
+      }
 
       final response = await _supabase.auth.signInWithPassword(
         email: cleanEmail,
@@ -171,6 +263,7 @@ class AuthProvider extends ChangeNotifier {
         _isTempLogin = false;
         await prefs.setString(_explicitLoginUidKey, response.user!.id);
         await _loadUserProfile(response.user);
+        await _persistCurrentUserIfRemembered();
         _isLoading = false;
         _shouldShowWelcome = true;
         notifyListeners();
@@ -253,6 +346,7 @@ class AuthProvider extends ChangeNotifier {
         if (res.user != null) {
           _isTempLogin = false;
           _currentUser = tempUser;
+          await _persistCurrentUserIfRemembered();
           _isLoading = false;
           _errorMessage = null;
           _shouldShowWelcome = true;
@@ -266,6 +360,7 @@ class AuthProvider extends ChangeNotifier {
 
     _isTempLogin = true;
     _currentUser = tempUser;
+    await _persistCurrentUserIfRemembered();
     _isLoading = false;
     _errorMessage = null;
     _shouldShowWelcome = true;
@@ -279,6 +374,7 @@ class AuthProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_explicitLoginEmailKey);
       await prefs.remove(_explicitLoginUidKey);
+      await prefs.remove(_persistedUserJsonKey);
     } catch (_) {}
     await _supabase.auth.signOut();
     _currentUser = null;
@@ -384,11 +480,15 @@ class AuthProvider extends ChangeNotifier {
       // 3. Limpiar SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('cnsc_temp_pwd_${_currentUser!.email.toLowerCase()}');
+      if (prefs.getBool(rememberMeKey) ?? true) {
+        await prefs.setString(savedPasswordKey, newPassword.trim());
+      }
 
-      // 4. Actualizar usuario en memoria
+      // 4. Actualizar usuario en memoria y persistir sesión si tiene Recordarme activo
       _currentUser = _currentUser!.copyWith(
         phone: cleanVal,
       );
+      await _persistCurrentUserIfRemembered();
       _isTempLogin = false;
       _isLoading = false;
       notifyListeners();

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:contro_asistencias/providers/auth_provider.dart';
 import 'package:contro_asistencias/providers/theme_provider.dart';
 import 'package:contro_asistencias/core/theme/app_theme.dart';
@@ -22,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _rememberMe = true;
   String? _errorMessage;
 
   @override
@@ -29,6 +31,25 @@ class _LoginScreenState extends State<LoginScreen> {
     super.initState();
     _emailController.addListener(_onTextChanged);
     _passwordController.addListener(_onTextChanged);
+    _loadRememberedCredentials();
+  }
+
+  Future<void> _loadRememberedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final remember = prefs.getBool(AuthProvider.rememberMeKey) ?? true;
+      final savedEmail = prefs.getString(AuthProvider.savedEmailKey) ?? '';
+      final savedPassword = prefs.getString(AuthProvider.savedPasswordKey) ?? '';
+      if (mounted) {
+        setState(() {
+          _rememberMe = remember;
+          if (remember) {
+            if (savedEmail.isNotEmpty) _emailController.text = savedEmail;
+            if (savedPassword.isNotEmpty) _passwordController.text = savedPassword;
+          }
+        });
+      }
+    } catch (_) {}
   }
 
   void _onTextChanged() {
@@ -57,6 +78,7 @@ class _LoginScreenState extends State<LoginScreen> {
       () => authProvider.signIn(
         email: _emailController.text.trim(),
         password: _passwordController.text,
+        rememberMe: _rememberMe,
       ),
       message: 'Iniciando sesión...',
     );
@@ -627,30 +649,78 @@ class _LoginScreenState extends State<LoginScreen> {
 
                               const SizedBox(height: 8),
 
-                              // ¿OLVIDASTE TU CONTRASEÑA? LINK
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: TextButton(
-                                  onPressed: _showForgotPasswordModal,
-                                  style: TextButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 4,
+                              // RECORDARME Y ¿OLVIDASTE TU CONTRASEÑA?
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  InkWell(
+                                    onTap: () => setState(() => _rememberMe = !_rememberMe),
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          SizedBox(
+                                            width: 22,
+                                            height: 22,
+                                            child: Checkbox(
+                                              value: _rememberMe,
+                                              activeColor: AppTheme.accent,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(5),
+                                              ),
+                                              side: BorderSide(
+                                                color: isDark
+                                                    ? const Color(0xFF94A3B8)
+                                                    : AppTheme.textSecondary,
+                                                width: 1.5,
+                                              ),
+                                              onChanged: (val) => setState(
+                                                () => _rememberMe = val ?? true,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Recordarme',
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w600,
+                                              color: isDark
+                                                  ? Colors.white
+                                                  : AppTheme.onBackground,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                    minimumSize: Size.zero,
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   ),
-                                  child: Text(
-                                    '¿Olvidaste tu contraseña?',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: isDark
-                                          ? AppTheme.accentLight
-                                          : AppTheme.primary,
+                                  Flexible(
+                                    child: TextButton(
+                                      onPressed: _showForgotPasswordModal,
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 4,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      child: Text(
+                                        '¿Olvidaste tu contraseña?',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: isDark
+                                              ? AppTheme.accentLight
+                                              : AppTheme.primary,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
+                                ],
                               ),
 
                               const SizedBox(height: 24),

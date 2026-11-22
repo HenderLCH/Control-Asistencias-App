@@ -6,7 +6,6 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 import 'package:csv/csv.dart';
 import 'package:contro_asistencias/core/utils/file_downloader.dart';
 import 'package:contro_asistencias/providers/attendance_provider.dart';
@@ -672,10 +671,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
       );
 
-      await Printing.layoutPdf(
-        onLayout: (format) => pdf.save(),
-        name: 'Reporte_General_12_Salones.pdf',
+      final periodName = _selectedReportType == AppConstants.reportDaily
+          ? 'Diario_${DateFormat('yyyyMMdd').format(_selectedDailyDate)}'
+          : '${_reportTypeLabel(_selectedReportType)}_${DateFormat('yyyyMMdd').format(dateRange.start)}_al_${DateFormat('yyyyMMdd').format(dateRange.end)}';
+      final pdfBytes = await pdf.save();
+      final saved = await downloadFileBytes(
+        pdfBytes,
+        'Reporte_General_12_Salones_$periodName.pdf',
+        mimeType: 'application/pdf',
       );
+      if (saved && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PDF guardado correctamente.'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
     } else if (_isIncidents) {
       if (_institutionalData.isEmpty) return;
       final headerDate = _getHeaderDateTitle();
@@ -797,10 +809,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
       );
 
-      await Printing.layoutPdf(
-        onLayout: (format) => pdf.save(),
-        name: 'Reporte_Inasistencias_Tardanzas.pdf',
+      final periodName = _selectedReportType == AppConstants.reportDaily
+          ? 'Diario_${DateFormat('yyyyMMdd').format(_selectedDailyDate)}'
+          : '${_reportTypeLabel(_selectedReportType)}_${DateFormat('yyyyMMdd').format(dateRange.start)}_al_${DateFormat('yyyyMMdd').format(dateRange.end)}';
+      final pdfBytes = await pdf.save();
+      final saved = await downloadFileBytes(
+        pdfBytes,
+        'Reporte_Inasistencias_Tardanzas_$periodName.pdf',
+        mimeType: 'application/pdf',
       );
+      if (saved && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PDF guardado correctamente.'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
     } else {
       if (_classroomData.isEmpty || _selectedClassroom == null) return;
       pdf.addPage(
@@ -852,13 +877,27 @@ class _ReportsScreenState extends State<ReportsScreen> {
         ),
       );
 
-      await Printing.layoutPdf(
-        onLayout: (format) => pdf.save(),
-        name: 'Reporte_${_selectedClassroom!.displayName.replaceAll(' ', '_')}.pdf',
+      final periodName = _selectedReportType == AppConstants.reportDaily
+          ? 'Diario_${DateFormat('yyyyMMdd').format(_selectedDailyDate)}'
+          : '${_reportTypeLabel(_selectedReportType)}_${DateFormat('yyyyMMdd').format(dateRange.start)}_al_${DateFormat('yyyyMMdd').format(dateRange.end)}';
+      final safeName = _selectedClassroom!.displayName.replaceAll(' ', '_');
+      final pdfBytes = await pdf.save();
+      final saved = await downloadFileBytes(
+        pdfBytes,
+        'Reporte_${safeName}_$periodName.pdf',
+        mimeType: 'application/pdf',
       );
+      if (saved && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PDF guardado correctamente.'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
     }
   },
-  message: 'Generando documento PDF oficial...',
+  message: 'Guardando documento PDF oficial...',
 );
 }
 
@@ -1268,7 +1307,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                             ),
                             onPressed: _exportPdf,
                             icon: const Icon(Icons.picture_as_pdf_rounded, size: 18),
-                            label: const Text('Exportar PDF'),
+                            label: const Text('Guardar PDF'),
                           ),
                         ),
                       ],

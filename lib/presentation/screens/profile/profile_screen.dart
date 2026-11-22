@@ -10,6 +10,8 @@ import 'package:contro_asistencias/providers/theme_provider.dart';
 import 'package:contro_asistencias/core/theme/app_theme.dart';
 import 'package:contro_asistencias/core/utils/validators.dart';
 import 'package:contro_asistencias/core/constants/app_constants.dart';
+import 'package:contro_asistencias/core/constants/supabase_config.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:contro_asistencias/presentation/widgets/auth/change_password_dialog.dart';
 import 'package:contro_asistencias/presentation/widgets/legal/legal_documents_dialog.dart';
 
@@ -614,12 +616,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   color: AppTheme.primary,
                                 ),
                               ),
-                              Text(
-                                'Sistema de Control de Asistencias v1.2',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppTheme.primary.withOpacity(0.7),
-                                ),
+                              FutureBuilder<PackageInfo>(
+                                future: PackageInfo.fromPlatform(),
+                                builder: (context, snapshot) {
+                                  final ver = (snapshot.data?.version.isNotEmpty ?? false)
+                                      ? snapshot.data!.version
+                                      : SupabaseConfig.appVersion;
+                                  return Text(
+                                    'Sistema de Control de Asistencias v$ver',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: AppTheme.primary.withOpacity(0.7),
+                                    ),
+                                  );
+                                },
                               ),
                             ],
                           ),
